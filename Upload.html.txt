@@ -147,14 +147,87 @@
     @keyframes spin { to { transform: rotate(360deg); } }
     .spinner { width: 15px; height: 15px; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: spin 0.7s linear infinite; }
 
-    .status-msg {
-      padding: 10px 14px; border-radius: 8px; font-size: 12px;
-      font-weight: 500; display: none; line-height: 1.6; white-space: pre-line;
+    /* ── Progress Card ── */
+    .progress-card {
+      display: none;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
     }
-    .status-msg.show    { display: block; }
-    .status-msg.success { background: var(--success-bg); color: var(--success); border: 1px solid rgba(34,197,94,0.2); }
-    .status-msg.error   { background: var(--error-bg);   color: var(--error);   border: 1px solid rgba(239,68,68,0.2); }
-    .status-msg.loading { background: rgba(79,142,247,0.08); color: var(--accent); border: 1px solid rgba(79,142,247,0.2); }
+    .progress-card.show { display: block; }
+    .progress-card.success { border-color: rgba(34,197,94,0.4); background: var(--success-bg); }
+    .progress-card.error   { border-color: rgba(239,68,68,0.4); background: var(--error-bg); }
+
+    .progress-header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 10px;
+    }
+    .progress-stage {
+      font-size: 12px; font-weight: 600; color: var(--text);
+      display: flex; align-items: center; gap: 8px;
+    }
+    .progress-percent {
+      font-size: 13px; font-weight: 800; color: var(--accent);
+      font-variant-numeric: tabular-nums;
+    }
+    .progress-card.success .progress-percent { color: var(--success); }
+    .progress-card.error   .progress-percent { color: var(--error); }
+
+    .progress-track {
+      width: 100%; height: 8px; background: var(--surface2);
+      border-radius: 4px; overflow: hidden; position: relative;
+    }
+    .progress-fill {
+      height: 100%; width: 0%;
+      background: linear-gradient(90deg, var(--accent) 0%, var(--accent2) 100%);
+      border-radius: 4px;
+      transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+      position: relative;
+    }
+    .progress-fill::after {
+      content: '';
+      position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+      background: linear-gradient(90deg,
+        transparent 0%,
+        rgba(255,255,255,0.25) 50%,
+        transparent 100%);
+      animation: shimmer 1.4s linear infinite;
+    }
+    @keyframes shimmer {
+      0%   { transform: translateX(-100%); }
+      100% { transform: translateX(100%); }
+    }
+    .progress-card.success .progress-fill { background: var(--success); }
+    .progress-card.success .progress-fill::after { display: none; }
+    .progress-card.error   .progress-fill { background: var(--error); }
+    .progress-card.error   .progress-fill::after { display: none; }
+
+    .progress-meta {
+      display: flex; justify-content: space-between;
+      margin-top: 10px; font-size: 11px; color: var(--muted);
+    }
+    .progress-elapsed { font-variant-numeric: tabular-nums; }
+    .progress-final {
+      font-size: 12px; font-weight: 500; line-height: 1.6;
+      white-space: pre-line; margin-top: 10px;
+      padding-top: 10px; border-top: 1px solid var(--border);
+      display: none;
+    }
+    .progress-card.success .progress-final,
+    .progress-card.error   .progress-final { display: block; }
+    .progress-card.success .progress-final { color: var(--success); }
+    .progress-card.error   .progress-final { color: var(--error); }
+
+    .mini-spinner {
+      width: 12px; height: 12px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    .progress-card.success .mini-spinner,
+    .progress-card.error   .mini-spinner { display: none; }
 
     /* ── RIGHT: Preview Panel ── */
     .preview-panel {
@@ -287,7 +360,24 @@
         ↑ Upload to Sheet
       </button>
 
-      <div class="status-msg" id="statusMsg"></div>
+      <!-- Progress Card -->
+      <div class="progress-card" id="progressCard">
+        <div class="progress-header">
+          <div class="progress-stage" id="progressStage">
+            <div class="mini-spinner"></div>
+            <span id="progressText">Preparing...</span>
+          </div>
+          <div class="progress-percent" id="progressPercent">0%</div>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill" id="progressFill"></div>
+        </div>
+        <div class="progress-meta">
+          <span id="progressDetail">Server se connect ho raha hai...</span>
+          <span class="progress-elapsed" id="progressElapsed">0.0s</span>
+        </div>
+        <div class="progress-final" id="progressFinal"></div>
+      </div>
 
     </div>
 
@@ -310,6 +400,14 @@
 <script>
   var loadedData  = '';
   var reportsData = [];
+
+  // Progress state
+  var currentJobId      = null;
+  var progressPollTimer = null;
+  var elapsedTimer      = null;
+  var uploadStartTime   = 0;
+  var lastServerPct     = 0;
+  var clientPct         = 0;
 
   window.onload = function() {
     google.script.run
@@ -343,25 +441,20 @@
     var report = reportsData[parseInt(idx)];
     var type   = report.type.toUpperCase();
 
-    // Topbar badge update
     top.style.display = 'inline-block';
     top.textContent   = type;
     top.className     = 'topbar-badge ' + (type === 'COMPACT' ? 'badge-compact' : 'badge-detailed');
 
-    // Voucher tags — is report ke saved types ke hisaab se re-apply karo
     applySavedVoucherTypes(report);
-
     checkReady();
   }
 
   function applySavedVoucherTypes(report) {
     var tags = document.querySelectorAll('.vtag');
-    if (!tags || tags.length === 0) return; // tags abhi render nahi hue
+    if (!tags || tags.length === 0) return;
 
-    // Pehle sab deselect karo
     tags.forEach(function(t){ t.classList.remove('selected'); });
 
-    // Phir saved wale select karo
     if (report.savedVoucherTypes && report.savedVoucherTypes.length > 0) {
       var saved = {};
       report.savedVoucherTypes.forEach(function(v){ saved[v.trim().toLowerCase()] = 1; });
@@ -406,7 +499,7 @@
 
     renderPreview(valid);
     checkReady();
-    hideStatus();
+    hideProgress();
   }
 
   var dz = document.getElementById('dropZone');
@@ -453,17 +546,14 @@
     var dates = valid.map(function(r){ return pd(r.BSODateData); }).filter(Boolean);
     dates.sort(function(a,b){ return a-b; });
 
-    // Unique bills
     var bills = {};
     valid.forEach(function(r){ if(r.BSOBillNoData) bills[r.BSOBillNoData] = 1; });
     var billCount = Object.keys(bills).length;
 
-    // Voucher types
     var types = {};
     valid.forEach(function(r){ if(r.BSOVoucherTypeData) types[r.BSOVoucherTypeData] = 1; });
     var typeKeys = Object.keys(types);
 
-    // Total value
     var totalVal = 0;
     valid.forEach(function(r){ totalVal += Math.abs(parseFloat(r.BSOTotalValueData) || 0); });
 
@@ -523,54 +613,146 @@
 
   function getSelectedVouchers() {
     var tags = document.querySelectorAll('.vtag');
-    if (!tags || tags.length === 0) return []; // tags exist nahi karte abhi
+    if (!tags || tags.length === 0) return [];
     var sel = [];
     tags.forEach(function(t){ if (t.classList.contains('selected')) sel.push(t.dataset.type); });
     return sel;
   }
 
-
-
   function checkReady() {
     document.getElementById('uploadBtn').disabled = !(loadedData.length > 0 && document.getElementById('reportSelect').value !== '');
 
-    // File load hone ke baad saved voucher types apply karo
     var idx = document.getElementById('reportSelect').value;
     if (idx !== '') {
       applySavedVoucherTypes(reportsData[parseInt(idx)]);
     }
   }
 
+  // ╔══════════════════════════════════════════════════════════╗
+  // ║  UPLOAD with PROGRESS POLLING                            ║
+  // ╚══════════════════════════════════════════════════════════╝
   function startUpload() {
-    if (!loadedData) { showStatus('Pehle file choose karein!', 'error'); return; }
+    if (!loadedData) { showProgress('error', 'Pehle file choose karein!', 0); return; }
     var idx = document.getElementById('reportSelect').value;
-    if (idx === '') { showStatus('Report select karein!', 'error'); return; }
+    if (idx === '') { showProgress('error', 'Report select karein!', 0); return; }
 
     var report = reportsData[parseInt(idx)];
     var btn = document.getElementById('uploadBtn');
     btn.disabled = true;
     btn.innerHTML = '<div class="spinner"></div> Uploading...';
-    showStatus('Processing...', 'loading');
 
+    // Naya jobId banao har upload ke liye
+    currentJobId = 'job_' + new Date().getTime() + '_' + Math.floor(Math.random() * 1000000);
+    uploadStartTime = new Date().getTime();
+    lastServerPct = 0;
+    clientPct = 0;
+
+    showProgress('loading', 'Server par data bheja ja raha hai...', 0);
+    document.getElementById('progressDetail').textContent = 'Server connect ho raha hai...';
+
+    // Elapsed timer (har 100ms par UI update)
+    elapsedTimer = setInterval(function(){
+      var sec = (new Date().getTime() - uploadStartTime) / 1000;
+      document.getElementById('progressElapsed').textContent = sec.toFixed(1) + 's';
+
+      // Client-side fake progress jab tak server respond nahi karta (max 10%)
+      if (lastServerPct === 0 && clientPct < 10) {
+        clientPct = Math.min(10, clientPct + 0.4);
+        setProgressBar(clientPct);
+      }
+    }, 100);
+
+    // Server progress polling (har 700ms)
+    progressPollTimer = setInterval(pollProgress, 700);
+
+    // Main upload call
     google.script.run
       .withSuccessHandler(function(res) {
+        stopProgressTimers();
         btn.disabled = false;
         btn.innerHTML = '↑ Upload to Sheet';
-        showStatus(res, res && (res.includes('✅') || res.includes('Done')) ? 'success' : 'error');
+
+        var isSuccess = res && (res.indexOf('✅') !== -1 || res.toLowerCase().indexOf('done') !== -1);
+        finalizeProgress(isSuccess ? 'success' : 'error', res);
+
+        // Cache cleanup
+        if (currentJobId) {
+          google.script.run.clearProgress(currentJobId);
+        }
       })
       .withFailureHandler(function(err) {
+        stopProgressTimers();
         btn.disabled = false;
         btn.innerHTML = '↑ Upload to Sheet';
-        showStatus('Error: ' + err.message, 'error');
+        finalizeProgress('error', '❌ Error: ' + (err && err.message ? err.message : err));
+        if (currentJobId) {
+          google.script.run.clearProgress(currentJobId);
+        }
       })
-      .processJSON(loadedData, report.name, report.sheet, report.sheetId, report.type.toUpperCase(), getSelectedVouchers());
+      .processJSON(loadedData, report.name, report.sheet, report.sheetId, report.type.toUpperCase(), getSelectedVouchers(), currentJobId);
   }
 
-  function showStatus(msg, type) {
-    var el = document.getElementById('statusMsg');
-    el.textContent = msg; el.className = 'status-msg show ' + type;
+  function pollProgress() {
+    if (!currentJobId) return;
+    google.script.run
+      .withSuccessHandler(function(p) {
+        if (!p) return;
+        if (typeof p.pct === 'number' && p.pct >= lastServerPct) {
+          lastServerPct = p.pct;
+          setProgressBar(p.pct);
+        }
+        if (p.msg) {
+          document.getElementById('progressText').textContent = p.msg;
+          document.getElementById('progressDetail').textContent = 'Stage ' + Math.round(p.pct) + '%';
+        }
+      })
+      .withFailureHandler(function(){ /* ignore poll failures */ })
+      .getProgress(currentJobId);
   }
-  function hideStatus() { document.getElementById('statusMsg').className = 'status-msg'; }
+
+  function stopProgressTimers() {
+    if (progressPollTimer) { clearInterval(progressPollTimer); progressPollTimer = null; }
+    if (elapsedTimer)      { clearInterval(elapsedTimer);      elapsedTimer      = null; }
+  }
+
+  function showProgress(type, message, pct) {
+    var card = document.getElementById('progressCard');
+    card.className = 'progress-card show ' + type;
+    document.getElementById('progressText').textContent = message;
+    document.getElementById('progressPercent').textContent = Math.round(pct || 0) + '%';
+    document.getElementById('progressFill').style.width = (pct || 0) + '%';
+    document.getElementById('progressDetail').textContent = '';
+    document.getElementById('progressElapsed').textContent = '0.0s';
+    document.getElementById('progressFinal').textContent = '';
+  }
+
+  function setProgressBar(pct) {
+    pct = Math.max(0, Math.min(100, pct));
+    document.getElementById('progressFill').style.width = pct + '%';
+    document.getElementById('progressPercent').textContent = Math.round(pct) + '%';
+  }
+
+  function finalizeProgress(type, finalMessage) {
+    var card = document.getElementById('progressCard');
+    card.className = 'progress-card show ' + type;
+
+    if (type === 'success') {
+      setProgressBar(100);
+      document.getElementById('progressText').textContent = '✅ Upload complete';
+    } else {
+      // Error - keep current bar pct but recolor
+      document.getElementById('progressText').textContent = '❌ Upload failed';
+    }
+
+    var sec = (new Date().getTime() - uploadStartTime) / 1000;
+    document.getElementById('progressElapsed').textContent = sec.toFixed(1) + 's';
+    document.getElementById('progressDetail').textContent  = 'Total time';
+    document.getElementById('progressFinal').textContent   = finalMessage || '';
+  }
+
+  function hideProgress() {
+    document.getElementById('progressCard').className = 'progress-card';
+  }
 </script>
 </body>
 </html>
