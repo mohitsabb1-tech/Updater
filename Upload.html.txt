@@ -764,12 +764,13 @@
   function hideModal() { document.getElementById('modalOverlay').classList.remove('show'); }
 
   // ╔══════════════════════════════════════════════════╗
-  // ║  CHUNKED UPLOAD (Drive-backed, parallel)         ║
+  // ║  CHUNKED UPLOAD (sheet-backed, parallel)         ║
   // ╚══════════════════════════════════════════════════╝
-  // Server side me har chunk Drive me alag file me save hota hai.
-  // 100MB file = ~100 chunks × 1MB. Parallel uploads = 3 at a time.
-  var CHUNK_SIZE      = 1024 * 1024; // 1 MB per chunk
-  var PARALLEL_CHUNKS = 3;            // 3 chunks in flight at once
+  // Server side me har chunk hidden temp sheet ki cell me save hota hai.
+  // Sheet cell limit = 50,000 chars → hum 40,000 chars per chunk use karte hain.
+  // 100 MB file = ~2,500 chunks × 40 KB. Parallel uploads = 5 at a time.
+  var CHUNK_SIZE      = 40 * 1024;  // 40 KB per chunk (safe under 50K cell limit)
+  var PARALLEL_CHUNKS = 5;          // 5 chunks in flight at once
 
   function uploadChunksParallel(jobId, totalChunks, onAllSent, onError) {
     var nextIdx = 0;
@@ -798,7 +799,7 @@
       var totalMB = (loadedData.length / 1024 / 1024).toFixed(1);
       setStageText(
         '📤 Uploading file (' + completed + '/' + totalChunks + ' chunks)',
-        sentMB + ' MB / ' + totalMB + ' MB — Drive me save ho raha hai'
+        sentMB + ' MB / ' + totalMB + ' MB — Sheet me save ho raha hai'
       );
       lastUpdateTime = new Date().getTime();
 
@@ -827,7 +828,7 @@
           if (msg.indexOf('413') !== -1) {
             failed = true;
             onError('HTTP 413: Ek single chunk bhi limit cross kar gaya. Refresh karke retry karein.');
-          } else if (msg.indexOf('permission') !== -1 || msg.indexOf('authorization') !== -1 || msg.indexOf('DriveApp') !== -1) {
+          } else if (msg.indexOf('permission') !== -1 || msg.indexOf('authorization') !== -1) {
             failed = true;
             onError('PERMISSION_NEEDED');
           } else {
@@ -894,7 +895,7 @@
     var fileMB = (loadedData.length / 1024 / 1024).toFixed(1);
     setStageText(
       '📤 Uploading file (0/' + totalChunks + ' chunks)',
-      fileMB + ' MB ko ' + totalChunks + ' chunks me bhej rahe hain (' + PARALLEL_CHUNKS + ' parallel)'
+      fileMB + ' MB ko ' + totalChunks + ' chunks me bhej rahe hain (' + PARALLEL_CHUNKS + ' parallel, sheet-backed)'
     );
 
     // Step 1: send all chunks in parallel
@@ -1075,28 +1076,27 @@
   function showPermissionModal() {
     var html =
       '<div style="font-size:12px; line-height:1.7; color:var(--text);">' +
-        '<p style="margin-bottom:12px;">Naye code me <b>Google Drive</b> ka use hota hai (bade files ke liye). ' +
-        'Google ko ek baar permission deni hogi:</p>' +
+        '<p style="margin-bottom:12px;">Spreadsheet ka access ek baar grant karna hoga:</p>' +
         '<ol style="padding-left:20px; margin-bottom:12px; color:var(--muted);">' +
           '<li style="margin-bottom:8px;"><b style="color:var(--text)">Apps Script editor</b> kholein ' +
-              '(Google Sheets → Extensions → Apps Script)</li>' +
+              '(Extensions → Apps Script)</li>' +
           '<li style="margin-bottom:8px;">Top dropdown me <b style="color:var(--accent)">setupPermissions</b> ' +
               'function select karein</li>' +
           '<li style="margin-bottom:8px;"><b style="color:var(--success)">▶ Run</b> button dabayein</li>' +
-          '<li style="margin-bottom:8px;">Google ka permission dialog aayega → ' +
+          '<li style="margin-bottom:8px;">Permission dialog → ' +
               '<b style="color:var(--success)">Allow</b> dabayein</li>' +
-          '<li>Yahan wapas aakar <b>Refresh</b> karein, fir Upload retry karein</li>' +
+          '<li>Refresh karein, fir Upload retry karein</li>' +
         '</ol>' +
         '<div style="background:rgba(79,142,247,0.1); border:1px solid rgba(79,142,247,0.3); ' +
                     'border-radius:8px; padding:10px; font-size:11px; color:var(--accent);">' +
-          'ℹ️ Yeh sirf <b>ek baar</b> karna hai. Iske baad sab uploads bina permission ke chalenge.' +
+          'ℹ️ Sirf <b>ek baar</b> karna hai. Iske baad sab uploads bina permission ke chalenge.' +
         '</div>' +
       '</div>';
 
     showModal({
       type: 'warning', icon: '🔐',
-      title: 'Drive permission grant karein',
-      subtitle: 'Bade files Drive me chunks ki tarah temporary save hote hain',
+      title: 'Permission grant karein',
+      subtitle: 'Naya code me sheet operations add hue hain — re-authorize ek baar',
       bodyHtml: html,
       buttons: [
         { label: 'Refresh page', style: 'primary', action: function(){ hideModal(); location.reload(); } },

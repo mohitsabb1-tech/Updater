@@ -1,16 +1,15 @@
 // ╔══════════════════════════════════════════════════════════╗
 // ║  Pflanze Pharma — Tally JSON Updater                     ║
 // ║  Features:                                               ║
-// ║    • Chunked upload (HTTP 413 fix, supports 100MB+)       ║
+// ║    • Sheet-backed chunked upload (no Drive permission!)   ║
 // ║    • Live progress with detailed debugging                ║
 // ║    • Smart duplicate detection (Bill+Party+Month)         ║
+// ║    • Supports 100MB+ JSON files                           ║
 // ║                                                           ║
-// ║  ⚠️ FIRST-TIME SETUP:                                     ║
-// ║    1) Apps Script editor me jakar 'setupPermissions'      ║
-// ║       function select karein                              ║
-// ║    2) ▶ Run button dabayein                               ║
-// ║    3) Google permission dialog allow karein               ║
-// ║    4) Web app me upload retry karein                      ║
+// ║  ⚠️ AGAR PERMISSION ERROR AAYE:                           ║
+// ║    1) Apps Script editor me 'setupPermissions' select     ║
+// ║    2) ▶ Run button dabayein → Allow                       ║
+// ║    3) Web app refresh karke Upload retry                  ║
 // ╚══════════════════════════════════════════════════════════╝
 
 var MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -30,24 +29,17 @@ function setupPermissions() {
   try {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     msgs.push('✅ Spreadsheet access OK: ' + (ss ? ss.getName() : 'no active'));
+
+    // Test temp sheet creation (where chunks will go)
+    var testSheet = ss.insertSheet('_setuptest_' + new Date().getTime());
+    testSheet.getRange('A1').setValue('test');
+    ss.deleteSheet(testSheet);
+    msgs.push('✅ Sheet write OK (test sheet created & deleted)');
   } catch(e) {
     msgs.push('❌ Spreadsheet: ' + e.toString());
   }
 
-  // 2. Drive access test
-  try {
-    var folder = _getTempFolder();
-    msgs.push('✅ Drive access OK. Temp folder: ' + folder.getName() + ' (id: ' + folder.getId() + ')');
-
-    // Create + delete a tiny test file to confirm write permission
-    var testFile = folder.createFile('permission_test_' + new Date().getTime(), 'ok', MimeType.PLAIN_TEXT);
-    testFile.setTrashed(true);
-    msgs.push('✅ Drive write OK (test file created & deleted)');
-  } catch(e) {
-    msgs.push('❌ Drive: ' + e.toString());
-  }
-
-  // 3. Cache access test
+  // 2. Cache access test
   try {
     var cache = CacheService.getUserCache();
     cache.put('setup_test', 'ok', 60);
@@ -56,14 +48,6 @@ function setupPermissions() {
     msgs.push('✅ Cache OK: ' + v);
   } catch(e) {
     msgs.push('❌ Cache: ' + e.toString());
-  }
-
-  // 4. Properties test
-  try {
-    PropertiesService.getScriptProperties();
-    msgs.push('✅ Properties OK');
-  } catch(e) {
-    msgs.push('❌ Properties: ' + e.toString());
   }
 
   var report = msgs.join('\n');
@@ -120,147 +104,124 @@ function clearProgress(jobId) {
 }
 
 // ╔══════════════════════════════════════════════════════════╗
-// ║  CHUNKED UPLOAD via DRIVE  (HTTP 413 fix, 100MB+ support)║
+// ║  CHUNKED UPLOAD via HIDDEN SHEET  (no extra permissions) ║
 // ╚══════════════════════════════════════════════════════════╝
 //
-// Bade JSON files (100MB+) Apps Script ke payload limit ko cross karte hain
-// → HTTP 413. CacheService bhi sirf 100KB per value hold kar sakta hai.
-// Solution: client 1MB chunks bheje, server har chunk ko Drive temp folder me
-// alag file ki tarah save karta hai. Last chunk ke baad sab files read karke
-// concat karta hai aur process karta hai.
+// Bade JSON files (100MB+) ke liye chunks active spreadsheet me ek
+// hidden temp sheet ki cells me store hote hain.
 //
-// Why Drive?
-//   ✓ Per-file size unlimited (vs CacheService 100KB limit)
-//   ✓ Persistent (cache expire issues nahi)
-//   ✓ Fast read/write
+// Why hidden sheet (vs Drive/Cache/Properties)?
+//   ✓ Already-granted Spreadsheet permission ka use — no new auth
+//   ✓ No size limit (sheet me 10M cells, har cell ~50K chars)
+//   ✓ Fast bulk read via getValues() in one shot
+//   ✓ Auto-cleanup (sheet delete after assembly)
 //
-var TEMP_FOLDER_NAME = 'PflanzeUploaderTemp';
-
-function _getTempFolder() {
-  var folders = DriveApp.getFoldersByName(TEMP_FOLDER_NAME);
-  if (folders.hasNext()) return folders.next();
-  return DriveApp.createFolder(TEMP_FOLDER_NAME);
-}
-
-function _padIdx(n) {
-  return ('00000' + n).slice(-5); // padded for proper sort order
-}
-
-function _chunkFileName(jobId, idx) {
-  return 'tmpchunk_' + jobId + '_' + _padIdx(idx);
+// Limits:
+//   • Each cell: max 50,000 chars  → use 40,000 chars per chunk (safe)
+//   • Sheet name: starts with '_tmpchunks_' so easy cleanup
+//
+function _getTempSheet(jobId, createIfMissing) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var name = '_tmpchunks_' + jobId;
+  var sheet = ss.getSheetByName(name);
+  if (!sheet && createIfMissing) {
+    sheet = ss.insertSheet(name);
+    try { sheet.hideSheet(); } catch(e) {}
+    // Disable auto-formatting for raw text storage
+    try { sheet.getRange('A:A').setNumberFormat('@'); } catch(e) {}
+  }
+  return sheet;
 }
 
 function uploadChunk(jobId, chunkIndex, totalChunks, chunkData) {
   try {
-    var folder = _getTempFolder();
-    var fileName = _chunkFileName(jobId, chunkIndex);
+    var sheet = _getTempSheet(jobId, true);
+    if (!sheet) throw new Error('Temp sheet create nahi hui');
 
-    // Idempotent: agar yeh chunk pehle se hai (retry case) to delete karke fresh banao
-    var existing = folder.getFilesByName(fileName);
-    while (existing.hasNext()) existing.next().setTrashed(true);
+    // Validate cell size limit
+    if (chunkData && chunkData.length > 49500) {
+      return { ok: false, error: 'Chunk size > 49500 chars (sheet cell limit). Client chunk size kam karein.' };
+    }
 
-    // Create as plain text file
-    folder.createFile(fileName, chunkData, MimeType.PLAIN_TEXT);
+    // Write chunk into row (chunkIndex+1), col A
+    sheet.getRange(chunkIndex + 1, 1).setValue(chunkData);
 
-    var pct = Math.round((chunkIndex + 1) / totalChunks * 8); // chunks 0-8% range
-    var sizeKB = Math.round(chunkData.length / 1024);
+    var pct = Math.round((chunkIndex + 1) / totalChunks * 8); // 0-8% for chunks
+    var sizeKB = Math.round((chunkData ? chunkData.length : 0) / 1024);
     _setProgress(jobId, pct,
       '📤 Chunk ' + (chunkIndex + 1) + '/' + totalChunks,
-      'Drive me save: ' + sizeKB + ' KB (total ' + Math.round((chunkIndex+1) * sizeKB / 1024) + ' MB)');
+      'Sheet me save: ' + sizeKB + ' KB');
     return { ok: true, received: chunkIndex + 1, total: totalChunks };
   } catch(e) {
     return { ok: false, error: 'Chunk ' + chunkIndex + ' fail: ' + e.toString() };
   }
 }
 
-function _assembleChunksFromDrive(jobId, totalChunks) {
-  var folder = _getTempFolder();
-  var parts = [];
-  var totalBytes = 0;
-
-  for (var i = 0; i < totalChunks; i++) {
-    if (i % 10 === 0) {
-      _setProgress(jobId, 10 + Math.round(i / totalChunks * 3),
-        '📦 Chunks assemble',
-        'Drive se ' + (i+1) + '/' + totalChunks + ' chunks padh raha hu...');
-    }
-    var fileName = _chunkFileName(jobId, i);
-    var files = folder.getFilesByName(fileName);
-    if (!files.hasNext()) {
-      _cleanupChunks(jobId, totalChunks);
-      throw new Error('Chunk ' + i + ' Drive me nahi mila. Refresh karke retry karein.');
-    }
-    var content = files.next().getBlob().getDataAsString();
-    parts.push(content);
-    totalBytes += content.length;
+function _assembleChunksFromSheet(jobId, totalChunks) {
+  var sheet = _getTempSheet(jobId, false);
+  if (!sheet) {
+    throw new Error('Temp sheet missing for job ' + jobId + '. Refresh karke retry karein.');
   }
 
-  _setProgress(jobId, 13, '📦 Chunks assemble',
-    'Sab chunks jod raha hu (' + Math.round(totalBytes / 1024 / 1024) + ' MB)...');
-  var assembled = parts.join('');
-  parts = null; // free memory
+  _setProgress(jobId, 11, '📦 Chunks assemble',
+    'Sheet se ' + totalChunks + ' chunks ek saath padh rahe hain...');
 
-  // Cleanup temp files (background)
-  _cleanupChunks(jobId, totalChunks);
+  // Bulk read all chunks in single API call (super fast)
+  var values = sheet.getRange(1, 1, totalChunks, 1).getValues();
+
+  // Validate all chunks present
+  for (var i = 0; i < totalChunks; i++) {
+    if (values[i][0] === '' || values[i][0] === null || values[i][0] === undefined) {
+      _cleanupTempSheet(jobId);
+      throw new Error('Chunk ' + i + ' empty/missing. Refresh karke retry karein.');
+    }
+  }
+
+  _setProgress(jobId, 13, '📦 Chunks join',
+    'Sab chunks jod rahe hain...');
+  var parts = values.map(function(r){ return r[0]; });
+  values = null; // free
+  var assembled = parts.join('');
+  parts = null;
+
+  // Cleanup temp sheet
+  _cleanupTempSheet(jobId);
 
   return assembled;
 }
 
-function _cleanupChunks(jobId, totalChunks) {
+function _cleanupTempSheet(jobId) {
   try {
-    var folder = _getTempFolder();
-    for (var j = 0; j < totalChunks; j++) {
-      var fileName = _chunkFileName(jobId, j);
-      var files = folder.getFilesByName(fileName);
-      while (files.hasNext()) {
-        try { files.next().setTrashed(true); } catch(e2){}
-      }
-    }
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = _getTempSheet(jobId, false);
+    if (sheet) ss.deleteSheet(sheet);
   } catch(e) { /* best effort */ }
 }
 
-// Manual cleanup helper — agar koi orphan chunks reh gaye purane jobs ke
+// Manual cleanup: orphan temp sheets clean karo
 function cleanupAllOrphanChunks() {
   try {
-    var folder = _getTempFolder();
-    var files = folder.getFilesByName ? folder.getFiles() : null;
-    if (!files) return 'No folder';
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sheets = ss.getSheets();
     var count = 0;
-    var now = new Date().getTime();
-    while (files.hasNext()) {
-      var f = files.next();
-      var name = f.getName();
-      if (name.indexOf('tmpchunk_') === 0) {
-        // Delete chunks older than 1 hour
-        var age = now - f.getDateCreated().getTime();
-        if (age > 60 * 60 * 1000) {
-          f.setTrashed(true);
-          count++;
-        }
+    sheets.forEach(function(s) {
+      if (s.getName().indexOf('_tmpchunks_') === 0) {
+        try { ss.deleteSheet(s); count++; } catch(e2){}
       }
-    }
-    return 'Cleaned ' + count + ' orphan chunks';
+    });
+    return 'Cleaned ' + count + ' orphan temp sheets';
   } catch(e) {
     return 'Error: ' + e.toString();
   }
 }
 
-// Cancel running job — delete this jobId ke saare chunks
+// Cancel running job — delete iska temp sheet
 function cancelJob(jobId) {
   if (!jobId) return { ok: false };
   try {
-    var folder = _getTempFolder();
-    var files = folder.getFiles();
-    var count = 0;
-    var prefix = 'tmpchunk_' + jobId + '_';
-    while (files.hasNext()) {
-      var f = files.next();
-      if (f.getName().indexOf(prefix) === 0) {
-        try { f.setTrashed(true); count++; } catch(e2){}
-      }
-    }
+    _cleanupTempSheet(jobId);
     clearProgress(jobId);
-    return { ok: true, deleted: count };
+    return { ok: true };
   } catch(e) {
     return { ok: false, error: e.toString() };
   }
@@ -637,9 +598,9 @@ function processJSONChunked(jobId, totalChunks, reportName, sheetName, sheetId, 
   var lastStage = 'Initial';
   try {
     _setProgress(jobId, 10, '📦 Chunks assemble',
-      totalChunks + ' chunks Drive se padhe ja rahe hain...');
-    lastStage = 'Chunk assembly from Drive';
-    var jsonData = _assembleChunksFromDrive(jobId, totalChunks);
+      totalChunks + ' chunks sheet se padhe ja rahe hain...');
+    lastStage = 'Chunk assembly from sheet';
+    var jsonData = _assembleChunksFromSheet(jobId, totalChunks);
 
     return _processJSONInternal(jsonData, reportName, sheetName, sheetId, type, selectedVoucherTypes, allowDuplicates, jobId);
   } catch(e) {
