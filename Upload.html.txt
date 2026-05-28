@@ -15,8 +15,10 @@
       --text: #e8eaf2;
       --muted: #5a6080;
       --success: #22c55e;
+      --warning: #f59e0b;
       --error: #ef4444;
       --success-bg: rgba(34,197,94,0.08);
+      --warning-bg: rgba(245,158,11,0.08);
       --error-bg: rgba(239,68,68,0.08);
       --compact: #a855f7;
       --detailed: #38bdf8;
@@ -28,11 +30,10 @@
     /* ── Topbar ── */
     .topbar {
       height: 52px; flex-shrink: 0;
-      background: var(--surface);
-      border-bottom: 1px solid var(--border);
+      background: var(--surface); border-bottom: 1px solid var(--border);
       display: flex; align-items: center; padding: 0 20px; gap: 16px;
     }
-    .back-btn {
+    .back-btn, .refresh-btn {
       display: flex; align-items: center; gap: 6px;
       background: transparent; border: 1px solid var(--border);
       color: var(--muted); font-size: 12px; font-weight: 500;
@@ -41,13 +42,6 @@
       font-family: 'Inter', sans-serif;
     }
     .back-btn:hover { border-color: var(--accent); color: var(--accent); }
-    .refresh-btn {
-      display: flex; align-items: center; gap: 5px;
-      background: transparent; border: 1px solid var(--border);
-      color: var(--muted); font-size: 12px; font-weight: 500;
-      padding: 5px 12px; border-radius: 6px; cursor: pointer;
-      transition: all 0.15s; font-family: 'Inter', sans-serif;
-    }
     .refresh-btn:hover { border-color: var(--success); color: var(--success); }
     .topbar-title {
       font-size: 13px; font-weight: 700; color: var(--text);
@@ -68,7 +62,7 @@
       overflow: hidden;
     }
 
-    /* ── LEFT: Upload Panel ── */
+    /* ── LEFT panel ── */
     .upload-panel {
       display: flex; flex-direction: column;
       padding: 28px; gap: 20px; overflow-y: auto;
@@ -102,13 +96,11 @@
     .dz-icon-done { display: none; }
     .dz-loaded-name { font-size: 13px; font-weight: 600; color: var(--success); margin-top: 6px; display: none; }
     .drop-zone.loaded .dz-loaded-name { display: block; }
-
     .change-link { text-align: center; font-size: 11px; color: var(--muted); display: none; cursor: pointer; margin-top: 8px; }
     .change-link span { color: var(--accent); }
     .change-link span:hover { text-decoration: underline; }
     .change-link.show { display: block; }
 
-    /* Select */
     .styled-select {
       width: 100%; border: 1px solid var(--border); border-radius: 8px;
       padding: 10px 36px 10px 12px; font-family: 'Inter', sans-serif;
@@ -122,18 +114,6 @@
     .styled-select:disabled { color: var(--muted); cursor: not-allowed; }
     .styled-select option { background: #1a1e2a; }
 
-    /* Type pill */
-    .type-pill {
-      display: none; align-items: center; gap: 8px;
-      padding: 8px 14px; border-radius: 8px; font-size: 12px; font-weight: 600;
-    }
-    .type-pill.show { display: flex; }
-    .type-pill.COMPACT  { background: rgba(168,85,247,0.1); color: var(--compact); border: 1px solid rgba(168,85,247,0.25); }
-    .type-pill.DETAILED { background: rgba(56,189,248,0.1); color: var(--detailed); border: 1px solid rgba(56,189,248,0.25); }
-    .pill-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-    .pill-desc { font-weight: 400; opacity: 0.75; font-size: 11px; }
-
-    /* Upload button */
     .upload-btn {
       width: 100%; padding: 13px; background: var(--accent); border: none;
       border-radius: 8px; color: #fff; font-family: 'Inter', sans-serif;
@@ -152,27 +132,36 @@
       display: none;
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 16px;
+      border-radius: 12px;
+      padding: 18px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.3);
     }
     .progress-card.show { display: block; }
     .progress-card.success { border-color: rgba(34,197,94,0.4); background: var(--success-bg); }
     .progress-card.error   { border-color: rgba(239,68,68,0.4); background: var(--error-bg); }
+    .progress-card.warning { border-color: rgba(245,158,11,0.4); background: var(--warning-bg); }
+    .progress-card.stuck   { border-color: rgba(245,158,11,0.5); background: var(--warning-bg); animation: pulse-stuck 1.4s infinite; }
+    @keyframes pulse-stuck {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(245,158,11,0.4); }
+      50%      { box-shadow: 0 0 0 8px rgba(245,158,11,0); }
+    }
 
     .progress-header {
       display: flex; justify-content: space-between; align-items: center;
-      margin-bottom: 10px;
+      margin-bottom: 12px;
     }
     .progress-stage {
-      font-size: 12px; font-weight: 600; color: var(--text);
+      font-size: 13px; font-weight: 700; color: var(--text);
       display: flex; align-items: center; gap: 8px;
     }
     .progress-percent {
-      font-size: 13px; font-weight: 800; color: var(--accent);
+      font-size: 14px; font-weight: 800; color: var(--accent);
       font-variant-numeric: tabular-nums;
     }
     .progress-card.success .progress-percent { color: var(--success); }
     .progress-card.error   .progress-percent { color: var(--error); }
+    .progress-card.warning .progress-percent,
+    .progress-card.stuck   .progress-percent { color: var(--warning); }
 
     .progress-track {
       width: 100%; height: 8px; background: var(--surface2);
@@ -189,9 +178,7 @@
       content: '';
       position: absolute; top: 0; left: 0; right: 0; bottom: 0;
       background: linear-gradient(90deg,
-        transparent 0%,
-        rgba(255,255,255,0.25) 50%,
-        transparent 100%);
+        transparent 0%, rgba(255,255,255,0.25) 50%, transparent 100%);
       animation: shimmer 1.4s linear infinite;
     }
     @keyframes shimmer {
@@ -202,25 +189,41 @@
     .progress-card.success .progress-fill::after { display: none; }
     .progress-card.error   .progress-fill { background: var(--error); }
     .progress-card.error   .progress-fill::after { display: none; }
+    .progress-card.warning .progress-fill { background: var(--warning); }
+    .progress-card.stuck   .progress-fill { background: var(--warning); }
 
-    .progress-meta {
-      display: flex; justify-content: space-between;
+    .progress-detail {
       margin-top: 10px; font-size: 11px; color: var(--muted);
+      line-height: 1.5; min-height: 16px;
+      word-break: break-word;
     }
-    .progress-elapsed { font-variant-numeric: tabular-nums; }
+    .progress-meta-row {
+      display: flex; justify-content: space-between;
+      margin-top: 8px; font-size: 10px; color: var(--muted);
+      letter-spacing: 0.05em; text-transform: uppercase; font-weight: 600;
+    }
+    .progress-elapsed { font-variant-numeric: tabular-nums; color: var(--accent); }
+
+    .stuck-warning {
+      display: none; margin-top: 12px; padding: 10px 12px;
+      background: rgba(245,158,11,0.12); border: 1px solid rgba(245,158,11,0.3);
+      border-radius: 8px; font-size: 11px; color: var(--warning);
+      line-height: 1.5;
+    }
+    .progress-card.stuck .stuck-warning { display: block; }
+
     .progress-final {
       font-size: 12px; font-weight: 500; line-height: 1.6;
-      white-space: pre-line; margin-top: 10px;
-      padding-top: 10px; border-top: 1px solid var(--border);
+      white-space: pre-line; margin-top: 12px;
+      padding: 10px 12px; border-radius: 8px;
+      background: rgba(0,0,0,0.2);
       display: none;
     }
-    .progress-card.success .progress-final,
-    .progress-card.error   .progress-final { display: block; }
-    .progress-card.success .progress-final { color: var(--success); }
-    .progress-card.error   .progress-final { color: var(--error); }
+    .progress-card.success .progress-final { display: block; color: var(--success); }
+    .progress-card.error   .progress-final { display: block; color: var(--error); }
 
     .mini-spinner {
-      width: 12px; height: 12px;
+      width: 14px; height: 14px;
       border: 2px solid var(--border);
       border-top-color: var(--accent);
       border-radius: 50%;
@@ -228,8 +231,10 @@
     }
     .progress-card.success .mini-spinner,
     .progress-card.error   .mini-spinner { display: none; }
+    .progress-card.success .mini-spinner::before { content: '✓'; }
+    .progress-card.error   .mini-spinner::before { content: '✗'; }
 
-    /* ── RIGHT: Preview Panel ── */
+    /* ── RIGHT preview ── */
     .preview-panel {
       background: var(--surface); display: flex; flex-direction: column;
       overflow: hidden;
@@ -253,30 +258,15 @@
     .preview-empty-text { font-size: 12px; line-height: 1.6; }
 
     .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--border); margin-bottom: 1px; }
-    .stat-cell {
-      background: var(--surface); padding: 16px 16px;
-    }
+    .stat-cell { background: var(--surface); padding: 16px 16px; }
     .stat-label { font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 5px; }
     .stat-val   { font-size: 20px; font-weight: 800; color: var(--text); }
     .stat-val.green  { color: var(--success); }
     .stat-val.blue   { color: var(--accent); }
     .stat-val.purple { color: var(--compact); }
 
-    .detail-list { }
-    .detail-row {
-      display: flex; justify-content: space-between; align-items: flex-start;
-      padding: 11px 18px; border-bottom: 1px solid var(--border);
-      font-size: 12px; gap: 12px;
-    }
-    .detail-row:last-child { border-bottom: none; }
-    .detail-key { color: var(--muted); font-weight: 500; flex-shrink: 0; }
-    .detail-val { color: var(--text); font-weight: 600; text-align: right; word-break: break-word; }
-    .detail-val.accent { color: var(--accent); }
-    .detail-val.success { color: var(--success); }
-
     .date-range-bar {
-      margin: 0; padding: 14px 18px;
-      background: rgba(79,142,247,0.07);
+      padding: 14px 18px; background: rgba(79,142,247,0.07);
       border-bottom: 1px solid var(--border);
       display: flex; align-items: center; gap: 8px;
     }
@@ -295,12 +285,8 @@
       background: rgba(34,197,94,0.12); border-color: var(--success);
       color: var(--success);
     }
-    .vtag-hint {
-      font-size: 10px; color: var(--muted); padding: 0 18px 10px;
-      font-style: italic;
-    }
     .vtag-actions {
-      display: flex; gap: 8px; padding: 0 18px 12px; 
+      display: flex; gap: 8px; padding: 0 18px 12px;
     }
     .vtag-action-btn {
       font-size: 10px; font-weight: 600; padding: 3px 10px;
@@ -309,13 +295,113 @@
       color: var(--muted); font-family: 'Inter', sans-serif;
     }
     .vtag-action-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+    .detail-list { }
+    .detail-row {
+      display: flex; justify-content: space-between; align-items: flex-start;
+      padding: 11px 18px; border-bottom: 1px solid var(--border);
+      font-size: 12px; gap: 12px;
+    }
+    .detail-row:last-child { border-bottom: none; }
+    .detail-key { color: var(--muted); font-weight: 500; flex-shrink: 0; }
+    .detail-val { color: var(--text); font-weight: 600; text-align: right; word-break: break-word; }
+    .detail-val.accent { color: var(--accent); }
+
+    /* ╔══════════════════════════════════════════════════════╗
+       ║  MODAL (CSS-only — replaces all native popups)       ║
+       ╚══════════════════════════════════════════════════════╝ */
+    .modal-overlay {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.65); backdrop-filter: blur(4px);
+      z-index: 1000; align-items: center; justify-content: center;
+      animation: fadeIn 0.2s ease;
+    }
+    .modal-overlay.show { display: flex; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+    .modal-box {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 14px; padding: 24px;
+      max-width: 540px; width: 92%; max-height: 80vh;
+      overflow-y: auto;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+      animation: slideUp 0.25s cubic-bezier(0.4,0,0.2,1);
+    }
+    @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+    .modal-icon {
+      width: 48px; height: 48px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 24px; margin: 0 auto 12px;
+    }
+    .modal-icon.warning { background: rgba(245,158,11,0.15); color: var(--warning); border: 2px solid rgba(245,158,11,0.4); }
+    .modal-icon.error   { background: rgba(239,68,68,0.15);  color: var(--error);   border: 2px solid rgba(239,68,68,0.4); }
+    .modal-icon.info    { background: rgba(79,142,247,0.15); color: var(--accent);  border: 2px solid rgba(79,142,247,0.4); }
+
+    .modal-title {
+      font-size: 16px; font-weight: 700; color: var(--text);
+      text-align: center; margin-bottom: 6px;
+    }
+    .modal-subtitle {
+      font-size: 12px; color: var(--muted); text-align: center;
+      margin-bottom: 18px; line-height: 1.5;
+    }
+
+    .modal-body { font-size: 12px; color: var(--text); line-height: 1.6; }
+
+    .dup-list {
+      display: flex; flex-direction: column; gap: 8px;
+      max-height: 300px; overflow-y: auto;
+      margin: 12px 0;
+    }
+    .dup-list::-webkit-scrollbar { width: 4px; }
+    .dup-list::-webkit-scrollbar-thumb { background: var(--border); }
+
+    .dup-item {
+      background: var(--surface2); border: 1px solid rgba(245,158,11,0.25);
+      border-radius: 8px; padding: 10px 12px;
+    }
+    .dup-party {
+      font-size: 12px; font-weight: 700; color: var(--warning);
+      margin-bottom: 4px;
+    }
+    .dup-meta {
+      font-size: 11px; color: var(--muted);
+      display: grid; grid-template-columns: auto 1fr; gap: 4px 10px;
+    }
+    .dup-meta b { color: var(--text); font-weight: 600; }
+
+    .modal-actions {
+      display: flex; gap: 10px; margin-top: 18px;
+      justify-content: flex-end;
+    }
+    .modal-btn {
+      padding: 9px 18px; border-radius: 8px;
+      font-family: 'Inter', sans-serif; font-size: 12px; font-weight: 600;
+      cursor: pointer; transition: all 0.15s; border: 1px solid var(--border);
+      background: var(--surface2); color: var(--muted);
+    }
+    .modal-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .modal-btn.primary {
+      background: var(--accent); border-color: var(--accent); color: #fff;
+    }
+    .modal-btn.primary:hover { background: #3a7af0; }
+    .modal-btn.danger {
+      background: var(--error); border-color: var(--error); color: #fff;
+    }
+    .modal-btn.danger:hover { background: #dc2626; }
+    .modal-btn.warning {
+      background: var(--warning); border-color: var(--warning); color: #1a1108;
+    }
+    .modal-btn.warning:hover { filter: brightness(1.1); }
   </style>
 </head>
 <body>
 
   <!-- Topbar -->
   <div class="topbar">
-    <a href="<?= getScriptUrl() ?>" class="back-btn">← Dashboard</a>
+    <a href="<?= getScriptUrl ? getScriptUrl() : '#' ?>" class="back-btn">← Dashboard</a>
     <div class="topbar-title">Data Upload</div>
     <div class="topbar-right">
       <div class="topbar-badge" id="topBadge" style="display:none"></div>
@@ -342,7 +428,7 @@
           <div class="dz-title">Drop JSON File Here</div>
           <div class="dz-sub">Ya <strong>click karein</strong> file choose karne ke liye</div>
           <div class="dz-loaded-name" id="loadedName"></div>
-        <div class="change-link" id="changeLink"><span onclick="openPicker(event)">Change file</span></div>
+          <div class="change-link" id="changeLink"><span onclick="openPicker(event)">Change file</span></div>
         </div>
         <input type="file" id="fileInput" accept=".json" style="display:none" onchange="handleFile(this)">
       </div>
@@ -354,8 +440,6 @@
         </select>
       </div>
 
-      <div class="type-pill" id="typePill" style="display:none"></div>
-
       <button class="upload-btn" id="uploadBtn" onclick="startUpload()" disabled>
         ↑ Upload to Sheet
       </button>
@@ -363,18 +447,24 @@
       <!-- Progress Card -->
       <div class="progress-card" id="progressCard">
         <div class="progress-header">
-          <div class="progress-stage" id="progressStage">
+          <div class="progress-stage">
             <div class="mini-spinner"></div>
-            <span id="progressText">Preparing...</span>
+            <span id="progressStage">Preparing...</span>
           </div>
           <div class="progress-percent" id="progressPercent">0%</div>
         </div>
         <div class="progress-track">
           <div class="progress-fill" id="progressFill"></div>
         </div>
-        <div class="progress-meta">
-          <span id="progressDetail">Server se connect ho raha hai...</span>
+        <div class="progress-detail" id="progressDetail">Server se connect ho raha hai...</div>
+        <div class="progress-meta-row">
+          <span id="progressJobId" style="opacity:0.6"></span>
           <span class="progress-elapsed" id="progressElapsed">0.0s</span>
+        </div>
+        <div class="stuck-warning" id="stuckWarning">
+          ⚠️ <b>Yeh stage zyada time le raha hai.</b><br>
+          Last update: <span id="stuckLastUpdate">—</span> seconds pehle.<br>
+          Agar 60s+ stuck rahe to refresh karke chote file try karein.
         </div>
         <div class="progress-final" id="progressFinal"></div>
       </div>
@@ -397,6 +487,19 @@
 
   </div>
 
+  <!-- ╔════════════════════════════════════════════════╗ -->
+  <!-- ║  MODAL (custom, CSS-only)                      ║ -->
+  <!-- ╚════════════════════════════════════════════════╝ -->
+  <div class="modal-overlay" id="modalOverlay">
+    <div class="modal-box">
+      <div class="modal-icon" id="modalIcon">⚠️</div>
+      <div class="modal-title" id="modalTitle">Title</div>
+      <div class="modal-subtitle" id="modalSubtitle">Subtitle</div>
+      <div class="modal-body" id="modalBody"></div>
+      <div class="modal-actions" id="modalActions"></div>
+    </div>
+  </div>
+
 <script>
   var loadedData  = '';
   var reportsData = [];
@@ -408,7 +511,10 @@
   var uploadStartTime   = 0;
   var lastServerPct     = 0;
   var clientPct         = 0;
+  var lastUpdateTime    = 0;
+  var stuckShown        = false;
 
+  // ─── INIT ───────────────────────────────────────────
   window.onload = function() {
     google.script.run
       .withSuccessHandler(function(res) {
@@ -432,19 +538,12 @@
   function onReportChange() {
     var idx = document.getElementById('reportSelect').value;
     var top = document.getElementById('topBadge');
-
-    if (idx === '') {
-      top.style.display = 'none';
-      checkReady(); return;
-    }
-
+    if (idx === '') { top.style.display = 'none'; checkReady(); return; }
     var report = reportsData[parseInt(idx)];
     var type   = report.type.toUpperCase();
-
     top.style.display = 'inline-block';
     top.textContent   = type;
     top.className     = 'topbar-badge ' + (type === 'COMPACT' ? 'badge-compact' : 'badge-detailed');
-
     applySavedVoucherTypes(report);
     checkReady();
   }
@@ -452,9 +551,7 @@
   function applySavedVoucherTypes(report) {
     var tags = document.querySelectorAll('.vtag');
     if (!tags || tags.length === 0) return;
-
     tags.forEach(function(t){ t.classList.remove('selected'); });
-
     if (report.savedVoucherTypes && report.savedVoucherTypes.length > 0) {
       var saved = {};
       report.savedVoucherTypes.forEach(function(v){ saved[v.trim().toLowerCase()] = 1; });
@@ -491,12 +588,11 @@
     loadedData = text;
     var parsed = tryParse(text);
     var valid  = getValidRows(parsed);
-
     var dz = document.getElementById('dropZone');
     dz.classList.add('loaded');
-    document.getElementById('loadedName').textContent = '📄 ' + filename + ' (' + valid.length + ' rows)';
+    var sizeKB = Math.round(text.length / 1024);
+    document.getElementById('loadedName').textContent = '📄 ' + filename + ' (' + valid.length + ' rows, ' + sizeKB + ' KB)';
     document.getElementById('changeLink').classList.add('show');
-
     renderPreview(valid);
     checkReady();
     hideProgress();
@@ -528,6 +624,7 @@
     return items.filter(function(r){ return r && (r.BSODateData || r.BSOItemData); });
   }
 
+  // ─── PREVIEW with smart duplicate detection ──────────
   function renderPreview(valid) {
     var body = document.getElementById('previewBody');
     if (!valid.length) {
@@ -540,15 +637,24 @@
       var p = s.split('-');
       return p.length === 3 ? new Date(+p[2], +p[1]-1, +p[0]) : null;
     }
-    var MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    function fmt(d) { if (!d) return '—'; var dd = d.getDate(); var mm = d.getMonth(); var yy = d.getFullYear(); return (dd < 10 ? '0'+dd : dd) + '-' + MONTHS_SHORT[mm] + '-' + yy; }
+    var MS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    function fmt(d) { if (!d) return '—'; var dd = d.getDate(); var mm = d.getMonth(); var yy = d.getFullYear(); return (dd < 10 ? '0'+dd : dd) + '-' + MS[mm] + '-' + yy; }
 
     var dates = valid.map(function(r){ return pd(r.BSODateData); }).filter(Boolean);
     dates.sort(function(a,b){ return a-b; });
 
-    var bills = {};
-    valid.forEach(function(r){ if(r.BSOBillNoData) bills[r.BSOBillNoData] = 1; });
-    var billCount = Object.keys(bills).length;
+    // SMART unique bills: bill+party+yymm = unique key
+    var billKeys = {};
+    valid.forEach(function(r){
+      var bill = (r.BSOBillNoData || '').toString().trim();
+      var party = (r.BSOPartyData || '').toString().trim();
+      if (!bill || !party) return;
+      var d = pd(r.BSODateData);
+      var ym = d ? (d.getFullYear() * 100 + d.getMonth()) : '';
+      var key = bill.toLowerCase() + '||' + party.toLowerCase() + '||' + ym;
+      if (!billKeys[key]) billKeys[key] = { bill: bill, party: party, date: r.BSODateData };
+    });
+    var uniqueBillCount = Object.keys(billKeys).length;
 
     var types = {};
     valid.forEach(function(r){ if(r.BSOVoucherTypeData) types[r.BSOVoucherTypeData] = 1; });
@@ -560,7 +666,7 @@
     body.innerHTML =
       '<div class="stat-grid">' +
         '<div class="stat-cell"><div class="stat-label">Total Rows</div><div class="stat-val green">' + valid.length.toLocaleString() + '</div></div>' +
-        '<div class="stat-cell"><div class="stat-label">Unique Bills</div><div class="stat-val blue">' + billCount + '</div></div>' +
+        '<div class="stat-cell"><div class="stat-label">Unique Bills</div><div class="stat-val blue">' + uniqueBillCount + '</div></div>' +
         '<div class="stat-cell"><div class="stat-label">Total Value</div><div class="stat-val purple" style="font-size:15px">₹' + totalVal.toLocaleString('en-IN', {maximumFractionDigits:0}) + '</div></div>' +
         '<div class="stat-cell"><div class="stat-label">Voucher Types</div><div class="stat-val" style="font-size:15px">' + typeKeys.length + '</div></div>' +
       '</div>' +
@@ -585,11 +691,7 @@
 
   function trunc(s, n) { return s ? (s.length > n ? s.substring(0,n-1)+'…' : s) : '—'; }
 
-  function toggleVoucher(el) {
-    el.classList.toggle('selected');
-    autoSaveVouchers();
-  }
-
+  function toggleVoucher(el) { el.classList.toggle('selected'); autoSaveVouchers(); }
   function autoSaveVouchers() {
     var idx = document.getElementById('reportSelect').value;
     if (idx === '') return;
@@ -598,19 +700,15 @@
     report.savedVoucherTypes = selected;
     google.script.run.saveVoucherTypes(report.name, selected);
   }
-
   function refreshPage() { location.reload(); }
-
   function selectAllVouchers() {
     document.querySelectorAll('.vtag').forEach(function(t){ t.classList.add('selected'); });
     autoSaveVouchers();
   }
-
   function clearAllVouchers() {
     document.querySelectorAll('.vtag').forEach(function(t){ t.classList.remove('selected'); });
     autoSaveVouchers();
   }
-
   function getSelectedVouchers() {
     var tags = document.querySelectorAll('.vtag');
     if (!tags || tags.length === 0) return [];
@@ -618,80 +716,239 @@
     tags.forEach(function(t){ if (t.classList.contains('selected')) sel.push(t.dataset.type); });
     return sel;
   }
-
   function checkReady() {
     document.getElementById('uploadBtn').disabled = !(loadedData.length > 0 && document.getElementById('reportSelect').value !== '');
-
     var idx = document.getElementById('reportSelect').value;
-    if (idx !== '') {
-      applySavedVoucherTypes(reportsData[parseInt(idx)]);
-    }
+    if (idx !== '') applySavedVoucherTypes(reportsData[parseInt(idx)]);
   }
 
-  // ╔══════════════════════════════════════════════════════════╗
-  // ║  UPLOAD with PROGRESS POLLING                            ║
-  // ╚══════════════════════════════════════════════════════════╝
-  function startUpload() {
-    if (!loadedData) { showProgress('error', 'Pehle file choose karein!', 0); return; }
+  // ╔══════════════════════════════════════════════════╗
+  // ║  MODAL helpers (replaces native alert/confirm)   ║
+  // ╚══════════════════════════════════════════════════╝
+  function showModal(opts) {
+    var ov  = document.getElementById('modalOverlay');
+    var ic  = document.getElementById('modalIcon');
+    var tt  = document.getElementById('modalTitle');
+    var sb  = document.getElementById('modalSubtitle');
+    var bd  = document.getElementById('modalBody');
+    var ac  = document.getElementById('modalActions');
+    ic.className = 'modal-icon ' + (opts.type || 'info');
+    ic.textContent = opts.icon || (opts.type === 'warning' ? '⚠️' : opts.type === 'error' ? '✕' : 'ℹ');
+    tt.textContent = opts.title || '';
+    sb.textContent = opts.subtitle || '';
+    bd.innerHTML   = opts.bodyHtml || '';
+    ac.innerHTML   = '';
+    (opts.buttons || [{label:'OK', style:'primary', action:hideModal}]).forEach(function(b){
+      var btn = document.createElement('button');
+      btn.className = 'modal-btn ' + (b.style || '');
+      btn.textContent = b.label;
+      btn.onclick = function(){ if (b.action) b.action(); };
+      ac.appendChild(btn);
+    });
+    ov.classList.add('show');
+  }
+  function hideModal() { document.getElementById('modalOverlay').classList.remove('show'); }
+
+  // ╔══════════════════════════════════════════════════╗
+  // ║  CHUNKED UPLOAD                                  ║
+  // ╚══════════════════════════════════════════════════╝
+  // Apps Script ka request limit hit hone se HTTP 413 aata hai.
+  // Solution: file ko 200KB chunks me bhejo, server cache me jod le,
+  // last chunk ke baad processJSONChunked() chala.
+  var CHUNK_SIZE = 200 * 1024; // 200 KB
+
+  function uploadChunksSequential(jobId, totalChunks, onAllSent, onError) {
+    var idx = 0;
+    function sendNext() {
+      if (idx >= totalChunks) { onAllSent(); return; }
+      var start = idx * CHUNK_SIZE;
+      var end   = Math.min(start + CHUNK_SIZE, loadedData.length);
+      var chunk = loadedData.substring(start, end);
+      var thisIdx = idx;
+
+      // Update progress
+      var pct = Math.round((idx) / totalChunks * 8); // 0-8% range for chunks
+      setProgressBar(pct);
+      setStageText('📤 Chunk ' + (idx+1) + '/' + totalChunks, 'Upload ho raha hai (' + Math.round((idx+1)*CHUNK_SIZE/1024) + ' KB)');
+      lastUpdateTime = new Date().getTime();
+
+      google.script.run
+        .withSuccessHandler(function(r) {
+          if (!r || !r.ok) { onError(r && r.error ? r.error : 'Chunk send fail'); return; }
+          idx++;
+          sendNext();
+        })
+        .withFailureHandler(function(err) {
+          var msg = (err && err.message) ? err.message : String(err);
+          if (msg.indexOf('413') !== -1) {
+            onError('HTTP 413: Chunk bhi bada hai. Refresh karke chote file try karein.');
+          } else {
+            onError(msg + ' (chunk ' + thisIdx + ')');
+          }
+        })
+        .uploadChunk(jobId, thisIdx, totalChunks, chunk);
+    }
+    sendNext();
+  }
+
+  // ╔══════════════════════════════════════════════════╗
+  // ║  MAIN UPLOAD FLOW                                ║
+  // ╚══════════════════════════════════════════════════╝
+  function startUpload(allowDuplicates) {
+    if (!loadedData) {
+      showModal({ type:'warning', title:'File missing', subtitle:'Pehle JSON file choose karein!',
+        buttons:[{label:'OK', style:'primary', action:hideModal}] });
+      return;
+    }
     var idx = document.getElementById('reportSelect').value;
-    if (idx === '') { showProgress('error', 'Report select karein!', 0); return; }
+    if (idx === '') {
+      showModal({ type:'warning', title:'Report missing', subtitle:'Report select karein!',
+        buttons:[{label:'OK', style:'primary', action:hideModal}] });
+      return;
+    }
 
     var report = reportsData[parseInt(idx)];
     var btn = document.getElementById('uploadBtn');
     btn.disabled = true;
     btn.innerHTML = '<div class="spinner"></div> Uploading...';
 
-    // Naya jobId banao har upload ke liye
     currentJobId = 'job_' + new Date().getTime() + '_' + Math.floor(Math.random() * 1000000);
     uploadStartTime = new Date().getTime();
+    lastUpdateTime  = new Date().getTime();
     lastServerPct = 0;
     clientPct = 0;
+    stuckShown = false;
 
-    showProgress('loading', 'Server par data bheja ja raha hai...', 0);
-    document.getElementById('progressDetail').textContent = 'Server connect ho raha hai...';
+    showProgress('loading', 'Preparing upload', 'File chunks me ban rahi hai...');
+    document.getElementById('progressJobId').textContent = 'Job: ' + currentJobId.split('_').slice(-1)[0];
 
-    // Elapsed timer (har 100ms par UI update)
+    // Elapsed timer + stuck detector
     elapsedTimer = setInterval(function(){
-      var sec = (new Date().getTime() - uploadStartTime) / 1000;
+      var now = new Date().getTime();
+      var sec = (now - uploadStartTime) / 1000;
       document.getElementById('progressElapsed').textContent = sec.toFixed(1) + 's';
 
-      // Client-side fake progress jab tak server respond nahi karta (max 10%)
-      if (lastServerPct === 0 && clientPct < 10) {
-        clientPct = Math.min(10, clientPct + 0.4);
-        setProgressBar(clientPct);
+      var sinceLast = (now - lastUpdateTime) / 1000;
+      if (sinceLast > 8) {
+        document.getElementById('stuckLastUpdate').textContent = sinceLast.toFixed(0);
+        document.getElementById('progressCard').classList.add('stuck');
+        stuckShown = true;
+      } else if (stuckShown && sinceLast < 3) {
+        document.getElementById('progressCard').classList.remove('stuck');
+        stuckShown = false;
       }
-    }, 100);
+    }, 200);
 
-    // Server progress polling (har 700ms)
-    progressPollTimer = setInterval(pollProgress, 700);
+    // Calculate chunks
+    var totalChunks = Math.ceil(loadedData.length / CHUNK_SIZE);
 
-    // Main upload call
+    // Step 1: send all chunks
+    uploadChunksSequential(currentJobId, totalChunks,
+      function onAllSent() {
+        // Step 2: trigger server-side processing + start progress polling
+        progressPollTimer = setInterval(pollProgress, 700);
+        runProcessOnServer(report, allowDuplicates, totalChunks);
+      },
+      function onError(err) {
+        stopProgressTimers();
+        btn.disabled = false;
+        btn.innerHTML = '↑ Upload to Sheet';
+        finalizeProgress('error', '❌ Chunk upload error', err);
+      }
+    );
+  }
+
+  function runProcessOnServer(report, allowDuplicates, totalChunks) {
+    var btn = document.getElementById('uploadBtn');
     google.script.run
       .withSuccessHandler(function(res) {
         stopProgressTimers();
         btn.disabled = false;
         btn.innerHTML = '↑ Upload to Sheet';
 
-        var isSuccess = res && (res.indexOf('✅') !== -1 || res.toLowerCase().indexOf('done') !== -1);
-        finalizeProgress(isSuccess ? 'success' : 'error', res);
-
-        // Cache cleanup
-        if (currentJobId) {
+        if (!res) {
+          finalizeProgress('error', '❌ No response', 'Server se koi response nahi mila');
           google.script.run.clearProgress(currentJobId);
+          return;
         }
+
+        // Duplicate detected — show modal
+        if (res.duplicate && res.duplicates && res.duplicates.length) {
+          finalizeProgress('warning', '⚠️ Duplicate bills detected', res.message || '');
+          showDuplicateModal(res.duplicates, report, totalChunks);
+          // Don't clear progress yet (user might re-trigger)
+          return;
+        }
+
+        if (res.success) {
+          finalizeProgress('success', '✅ Upload complete', res.message || '');
+        } else {
+          finalizeProgress('error', '❌ Upload failed', res.message || '');
+        }
+        google.script.run.clearProgress(currentJobId);
       })
       .withFailureHandler(function(err) {
         stopProgressTimers();
         btn.disabled = false;
         btn.innerHTML = '↑ Upload to Sheet';
-        finalizeProgress('error', '❌ Error: ' + (err && err.message ? err.message : err));
-        if (currentJobId) {
-          google.script.run.clearProgress(currentJobId);
+        var msg = (err && err.message) ? err.message : String(err);
+        if (msg.indexOf('413') !== -1) {
+          msg += '\n\n💡 Solution: File abhi bhi limit cross kar rahi hai. Refresh karke chota file try karein.';
         }
+        finalizeProgress('error', '❌ Server error', msg);
+        google.script.run.clearProgress(currentJobId);
       })
-      .processJSON(loadedData, report.name, report.sheet, report.sheetId, report.type.toUpperCase(), getSelectedVouchers(), currentJobId);
+      .processJSONChunked(currentJobId, totalChunks, report.name, report.sheet, report.sheetId, report.type.toUpperCase(), getSelectedVouchers(), !!allowDuplicates);
   }
 
+  function showDuplicateModal(dupes, report, totalChunks) {
+    var html = '<div style="font-size:11px; color:var(--muted); margin-bottom:10px;">' +
+               'In bills ki same Bill No + Party + Month sheet me already mojud hai, lekin <b>alag date</b> ke saath. Yeh shayad <b>double entry</b> hai:' +
+               '</div>';
+    html += '<div class="dup-list">';
+    dupes.forEach(function(d){
+      html += '<div class="dup-item">' +
+                '<div class="dup-party">🏢 ' + escapeHtml(d.party) + '</div>' +
+                '<div class="dup-meta">' +
+                  '<span>Bill No:</span><span><b>' + escapeHtml(d.billNo) + '</b></span>' +
+                  '<span>Sheet date:</span><span>' + escapeHtml(d.existingDate) + ' (Row ' + d.existingRow + ')</span>' +
+                  '<span>New date:</span><span style="color:var(--warning)"><b>' + escapeHtml(d.incomingDate) + '</b></span>' +
+                '</div>' +
+              '</div>';
+    });
+    html += '</div>';
+
+    showModal({
+      type: 'warning',
+      icon: '⚠️',
+      title: dupes.length + ' duplicate bill' + (dupes.length > 1 ? 's' : '') + ' mile',
+      subtitle: 'Update rok diya. Aap chahein to bhi force update kar sakte hain (apne risk par).',
+      bodyHtml: html,
+      buttons: [
+        { label: 'Cancel', style: '', action: function(){
+            hideModal();
+            google.script.run.clearProgress(currentJobId);
+        }},
+        { label: 'Force update anyway', style: 'warning', action: function(){
+            hideModal();
+            // Re-trigger with allowDuplicates=true (chunks already in cache, but they were cleared by assemble)
+            // Need to re-upload chunks
+            startUpload(true);
+        }}
+      ]
+    });
+  }
+
+  function escapeHtml(s) {
+    if (s == null) return '';
+    return String(s).replace(/[&<>"']/g, function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
+  }
+
+  // ╔══════════════════════════════════════════════════╗
+  // ║  PROGRESS POLLING                                ║
+  // ╚══════════════════════════════════════════════════╝
   function pollProgress() {
     if (!currentJobId) return;
     google.script.run
@@ -701,12 +958,14 @@
           lastServerPct = p.pct;
           setProgressBar(p.pct);
         }
-        if (p.msg) {
-          document.getElementById('progressText').textContent = p.msg;
-          document.getElementById('progressDetail').textContent = 'Stage ' + Math.round(p.pct) + '%';
+        if (p.stage)  setStageText(p.stage, p.detail || '');
+        lastUpdateTime = new Date().getTime();
+        if (stuckShown) {
+          document.getElementById('progressCard').classList.remove('stuck');
+          stuckShown = false;
         }
       })
-      .withFailureHandler(function(){ /* ignore poll failures */ })
+      .withFailureHandler(function(){ /* ignore */ })
       .getProgress(currentJobId);
   }
 
@@ -715,15 +974,18 @@
     if (elapsedTimer)      { clearInterval(elapsedTimer);      elapsedTimer      = null; }
   }
 
-  function showProgress(type, message, pct) {
+  function showProgress(type, stage, detail) {
     var card = document.getElementById('progressCard');
     card.className = 'progress-card show ' + type;
-    document.getElementById('progressText').textContent = message;
-    document.getElementById('progressPercent').textContent = Math.round(pct || 0) + '%';
-    document.getElementById('progressFill').style.width = (pct || 0) + '%';
-    document.getElementById('progressDetail').textContent = '';
+    setStageText(stage, detail);
+    setProgressBar(0);
     document.getElementById('progressElapsed').textContent = '0.0s';
     document.getElementById('progressFinal').textContent = '';
+  }
+
+  function setStageText(stage, detail) {
+    document.getElementById('progressStage').textContent  = stage  || '';
+    document.getElementById('progressDetail').textContent = detail || '';
   }
 
   function setProgressBar(pct) {
@@ -732,21 +994,15 @@
     document.getElementById('progressPercent').textContent = Math.round(pct) + '%';
   }
 
-  function finalizeProgress(type, finalMessage) {
+  function finalizeProgress(type, stage, finalMessage) {
+    stopProgressTimers();
     var card = document.getElementById('progressCard');
     card.className = 'progress-card show ' + type;
-
-    if (type === 'success') {
-      setProgressBar(100);
-      document.getElementById('progressText').textContent = '✅ Upload complete';
-    } else {
-      // Error - keep current bar pct but recolor
-      document.getElementById('progressText').textContent = '❌ Upload failed';
-    }
-
+    document.getElementById('progressStage').textContent = stage || '';
+    if (type === 'success') setProgressBar(100);
     var sec = (new Date().getTime() - uploadStartTime) / 1000;
     document.getElementById('progressElapsed').textContent = sec.toFixed(1) + 's';
-    document.getElementById('progressDetail').textContent  = 'Total time';
+    document.getElementById('progressDetail').textContent  = 'Total time: ' + sec.toFixed(1) + 's';
     document.getElementById('progressFinal').textContent   = finalMessage || '';
   }
 

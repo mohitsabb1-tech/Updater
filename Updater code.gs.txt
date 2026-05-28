@@ -1,34 +1,36 @@
-// ── Month names for DD-Mmm-YYYY format ──────────────────────
+// ╔══════════════════════════════════════════════════════════╗
+// ║  Pflanze Pharma — Tally JSON Updater                     ║
+// ║  Features:                                               ║
+// ║    • Chunked upload (HTTP 413 fix)                        ║
+// ║    • Live progress with detailed debugging                ║
+// ║    • Smart duplicate detection (Bill+Party+Month)         ║
+// ╚══════════════════════════════════════════════════════════╝
+
 var MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 // ╔══════════════════════════════════════════════════════════╗
 // ║  PROGRESS TRACKING  (CacheService)                       ║
 // ╚══════════════════════════════════════════════════════════╝
-//
-// Server processJSON() ke andar har stage par _setProgress() call hota hai.
-// Client side se har 700ms par getProgress(jobId) poll hota hai aur
-// progress bar update hota hai.
-//
-function _setProgress(jobId, percent, message) {
-  if (!jobId) return;
-  try {
-    var cache = CacheService.getUserCache();
-    var payload = JSON.stringify({
-      pct: percent,
-      msg: message,
-      ts: new Date().getTime(),
-      done: false
-    });
-    cache.put('prog_' + jobId, payload, 600); // 10 min
-  } catch(e) { /* ignore */ }
-}
-
-function _setProgressDone(jobId, percent, message) {
+function _setProgress(jobId, percent, stage, detail) {
   if (!jobId) return;
   try {
     var cache = CacheService.getUserCache();
     cache.put('prog_' + jobId, JSON.stringify({
-      pct: percent, msg: message, ts: new Date().getTime(), done: true
+      pct: percent,
+      stage: stage || '',
+      detail: detail || '',
+      ts: new Date().getTime(),
+      done: false
+    }), 600);
+  } catch(e) {}
+}
+
+function _setProgressDone(jobId, percent, stage, detail) {
+  if (!jobId) return;
+  try {
+    CacheService.getUserCache().put('prog_' + jobId, JSON.stringify({
+      pct: percent, stage: stage || '', detail: detail || '',
+      ts: new Date().getTime(), done: true
     }), 600);
   } catch(e) {}
 }
@@ -36,10 +38,8 @@ function _setProgressDone(jobId, percent, message) {
 function getProgress(jobId) {
   if (!jobId) return null;
   try {
-    var cache = CacheService.getUserCache();
-    var v = cache.get('prog_' + jobId);
-    if (!v) return null;
-    return JSON.parse(v);
+    var v = CacheService.getUserCache().get('prog_' + jobId);
+    return v ? JSON.parse(v) : null;
   } catch(e) { return null; }
 }
 
@@ -48,25 +48,106 @@ function clearProgress(jobId) {
   try { CacheService.getUserCache().remove('prog_' + jobId); } catch(e) {}
 }
 
-// ── Tally date (D-M-YYYY) → DD-Mmm-YYYY ─────────────────────
+// ╔══════════════════════════════════════════════════════════╗
+// ║  CHUNKED UPLOAD  (HTTP 413 fix)                          ║
+// ╚══════════════════════════════════════════════════════════╝
+//
+// Bade JSON files Apps Script ke single payload limit (~50MB request,
+// but practical ~10MB) ko cross karte hain → HTTP 413.
+// Solution: client small chunks bheje, server CacheService me jod ke
+// rakhta hai, last chunk par actual processing chalti hai.
+//
+function uploadChunk(jobId, chunkIndex, totalChunks, chunkData) {
+  try {
+    var cache = CacheService.getUserCache();
+    var key = 'chunk_' + jobId + '_' + chunkIndex;
+    cache.put(key, chunkData, 600);
+    _setProgress(jobId, Math.round((chunkIndex + 1) / totalChunks * 8),
+      '📤 Chunk ' + (chunkIndex + 1) + '/' + totalChunks + ' upload',
+      'File parts me bheji ja rahi hai (HTTP 413 avoid)');
+    return { ok: true, received: chunkIndex + 1, total: totalChunks };
+  } catch(e) {
+    return { ok: false, error: e.toString() };
+  }
+}
+
+function _assembleChunks(jobId, totalChunks) {
+  var cache = CacheService.getUserCache();
+  var parts = [];
+  for (var i = 0; i < totalChunks; i++) {
+    var key = 'chunk_' + jobId + '_' + i;
+    var p = cache.get(key);
+    if (p === null) {
+      throw new Error('Chunk ' + i + ' missing (cache expired?). Dobara try karein.');
+    }
+    parts.push(p);
+  }
+  // Cleanup
+  for (var j = 0; j < totalChunks; j++) {
+    cache.remove('chunk_' + jobId + '_' + j);
+  }
+  return parts.join('');
+}
+
+// ╔══════════════════════════════════════════════════════════╗
+// ║  Date helpers                                             ║
+// ╚══════════════════════════════════════════════════════════╝
 function tallyDateToDisplay(s) {
   if (!s) return s;
   var str = String(s).trim();
   if (!str) return str;
-
   var p = str.split('-');
   if (p.length !== 3) return str;
-
   var d = parseInt(p[0], 10);
   var m = parseInt(p[1], 10);
   var y = parseInt(p[2], 10);
-
   if (isNaN(d) || isNaN(m) || isNaN(y) || m < 1 || m > 12) return str;
-
   return (d < 10 ? '0' + d : String(d)) + '-' + MONTHS_SHORT[m - 1] + '-' + y;
 }
 
-// ── doGet & menu ─────────────────────────────────────────────
+function dateToInt(s) {
+  if (!s) return null;
+  if (s instanceof Date) {
+    if (isNaN(s.getTime())) return null;
+    return s.getFullYear() * 10000 + (s.getMonth() + 1) * 100 + s.getDate();
+  }
+  var str = String(s).trim();
+  if (!str) return null;
+  var p = str.split('-');
+  if (p.length !== 3) return null;
+
+  var monthIdx = MONTHS_SHORT.indexOf(p[1]);
+  if (monthIdx !== -1) {
+    var d = parseInt(p[0], 10);
+    var m = monthIdx + 1;
+    var y = parseInt(p[2], 10);
+    if (isNaN(d) || isNaN(y)) return null;
+    return y * 10000 + m * 100 + d;
+  }
+
+  var d = parseInt(p[0], 10), m = parseInt(p[1], 10), y = parseInt(p[2], 10);
+  if (isNaN(d) || isNaN(m) || isNaN(y)) return null;
+  return y * 10000 + m * 100 + d;
+}
+
+function intToDisplay(n) {
+  if (!n) return '?';
+  var y = Math.floor(n / 10000);
+  var m = Math.floor((n % 10000) / 100);
+  var d = n % 100;
+  return (d < 10 ? '0'+d : d) + '-' + MONTHS_SHORT[m-1] + '-' + y;
+}
+
+// Date ka year-month nikaalo (duplicate check ke liye)
+function _yearMonth(s) {
+  var di = dateToInt(s);
+  if (!di) return null;
+  return Math.floor(di / 100); // YYYYMM
+}
+
+// ╔══════════════════════════════════════════════════════════╗
+// ║  doGet & menu                                             ║
+// ╚══════════════════════════════════════════════════════════╝
 function doGet(e) {
   return HtmlService.createHtmlOutputFromFile('Upload')
       .setTitle('Pflanze Pharma - JSON Uploader')
@@ -74,21 +155,21 @@ function doGet(e) {
 }
 
 function onOpen() {
-  var ui = SpreadsheetApp.getUi();
-  ui.createMenu('Pflanze Pharma')
+  SpreadsheetApp.getUi()
+      .createMenu('Pflanze Pharma')
       .addItem('Upload Tally JSON', 'showUploadDialog')
       .addToUi();
 }
 
 function showUploadDialog() {
   var html = HtmlService.createHtmlOutputFromFile('Upload')
-      .setWidth(480)
-      .setHeight(620)
-      .setTitle('Upload Stock Data');
+      .setWidth(900).setHeight(680).setTitle('Upload Stock Data');
   SpreadsheetApp.getUi().showModalDialog(html, 'Upload Stock Data');
 }
 
-// ── App_Settings se reports list lo ──────────────────────────
+// ╔══════════════════════════════════════════════════════════╗
+// ║  App_Settings                                             ║
+// ╚══════════════════════════════════════════════════════════╝
 function getReportSettings() {
   try {
     var ss       = SpreadsheetApp.getActiveSpreadsheet();
@@ -123,42 +204,31 @@ function getReportSettings() {
   }
 }
 
-// ── Date helpers ──────────────────────────────────────────────
-function dateToInt(s) {
-  if (!s) return null;
-  if (s instanceof Date) {
-    if (isNaN(s.getTime())) return null;
-    return s.getFullYear() * 10000 + (s.getMonth() + 1) * 100 + s.getDate();
+function saveVoucherTypes(reportName, voucherTypes) {
+  try {
+    var ss       = SpreadsheetApp.getActiveSpreadsheet();
+    var settings = ss.getSheetByName('App_Settings');
+    if (!settings) return "Error: App_Settings nahi mili";
+
+    var lastRow = settings.getLastRow();
+    var range   = settings.getRange(2, 8, lastRow - 1, 1).getValues();
+
+    for (var i = 0; i < range.length; i++) {
+      var name = String(range[i][0] || "").trim();
+      if (name === reportName) {
+        settings.getRange(i + 2, 12).setValue(voucherTypes.join(", "));
+        return "Saved";
+      }
+    }
+    return "Error: Report nahi mila";
+  } catch(e) {
+    return "Error: " + e.toString();
   }
-  var str = String(s).trim();
-  if (!str) return null;
-
-  var p = str.split('-');
-  if (p.length !== 3) return null;
-
-  var monthIdx = MONTHS_SHORT.indexOf(p[1]);
-  if (monthIdx !== -1) {
-    var d = parseInt(p[0], 10);
-    var m = monthIdx + 1;
-    var y = parseInt(p[2], 10);
-    if (isNaN(d) || isNaN(y)) return null;
-    return y * 10000 + m * 100 + d;
-  }
-
-  var d = parseInt(p[0], 10), m = parseInt(p[1], 10), y = parseInt(p[2], 10);
-  if (isNaN(d) || isNaN(m) || isNaN(y)) return null;
-  return y * 10000 + m * 100 + d;
 }
 
-function intToDisplay(n) {
-  if (!n) return '?';
-  var y = Math.floor(n / 10000);
-  var m = Math.floor((n % 10000) / 100);
-  var d = n % 100;
-  return (d < 10 ? '0'+d : d) + '-' + MONTHS_SHORT[m-1] + '-' + y;
-}
-
-// ── COMPACT: Group items by bill ──────────────────────────────
+// ╔══════════════════════════════════════════════════════════╗
+// ║  Bill grouping (COMPACT)                                  ║
+// ╚══════════════════════════════════════════════════════════╝
 function makeBillKey(item) {
   return [
     item.BSODateData        || "",
@@ -168,9 +238,15 @@ function makeBillKey(item) {
   ].join("||");
 }
 
-function groupByBill(itemRows) {
+function groupByBill(itemRows, jobId) {
   var order = [], map = {};
-  itemRows.forEach(function(item) {
+  var total = itemRows.length;
+  itemRows.forEach(function(item, idx) {
+    if (idx % 200 === 0) {
+      _setProgress(jobId, 50 + Math.round(idx / total * 8),
+        '🧾 Bills group ho rahe',
+        'Row ' + (idx+1) + '/' + total + ' — ' + (item.BSOPartyData || '?'));
+    }
     if (!item || (!item.BSODateData && !item.BSOItemData)) return;
     var key = makeBillKey(item);
     if (!map[key]) {
@@ -203,29 +279,149 @@ function groupByBill(itemRows) {
   return order.map(function(k) { return map[k]; });
 }
 
-// ── Sheet writer (with progress) ─────────────────────────────
+// ╔══════════════════════════════════════════════════════════╗
+// ║  DUPLICATE DETECTION                                      ║
+// ║  Same (BillNo + Party + YearMonth) = duplicate            ║
+// ╚══════════════════════════════════════════════════════════╝
+function _detectDuplicatesInUpload(items, jobId) {
+  // Step 1: incoming items me hi check karo
+  _setProgress(jobId, 42, '🔍 Duplicate check', 'Naye data me duplicate dhund raha hu...');
+  var seen = {}; // key → first occurrence (party+billNo+yymm+row)
+  var dupes = [];
+  items.forEach(function(item, idx) {
+    var bill = String(item.BSOBillNoData || "").trim();
+    var party = String(item.BSOPartyData || "").trim();
+    var ym = _yearMonth(item.BSODateData);
+    if (!bill || !party || !ym) return;
+    var key = bill.toLowerCase() + '||' + party.toLowerCase() + '||' + ym;
+    if (seen[key]) {
+      // Same key, agar item alag hai (multi-item bill) to skip; check first row diff
+      // Hum sirf TRUE duplicate maante hain jab dono entries me different row hi same bill+party+month repeat ho
+      // Actually: ek bill me multiple items ho sakte hain, woh duplicate nahi.
+      // Real duplicate: same key ke liye ALAG ALAG date wala entry, ya same date par alag total
+      var first = seen[key];
+      if (first.date !== item.BSODateData ||
+          String(first.total) !== String(item.BSOTotalValueData || "") ||
+          String(first.itemKey) !== String(item.BSOItemData || "") + '|' + (item.BSOBatchNoData || "")) {
+        // Same bill+party+month but different date OR different item-batch combo with same total mismatch
+        // Yeh humare liye warning case nahi hai (ek bill me multi-item normal hai).
+        // Real duplicate detection: same bill+party+month + same item+batch → asli double entry
+      }
+    } else {
+      seen[key] = {
+        date: item.BSODateData,
+        total: item.BSOTotalValueData,
+        itemKey: (item.BSOItemData || "") + '|' + (item.BSOBatchNoData || "")
+      };
+    }
+  });
+  return dupes;
+}
+
+// Detect duplicates AGAINST EXISTING SHEET DATA
+// Compares incoming bill keys against rows already in sheet.
+// If incoming (bill+party+yymm) already exists in sheet AND incoming date != sheet date,
+// → block + report.
+function _detectDuplicatesAgainstSheet(sheet, incomingItems, type, jobId) {
+  _setProgress(jobId, 46, '🔍 Sheet me duplicate check', 'Purane data se compare ho raha hai...');
+  var existing = sheet.getDataRange().getValues();
+  if (existing.length <= 1) return [];
+
+  // Sheet me column mapping (COMPACT vs DETAILED)
+  // Both me: Date col=0, BillNo col=1
+  // COMPACT: Party col=2 ; DETAILED: Party col=13
+  var partyCol = (type === 'COMPACT') ? 2 : 13;
+
+  // Existing keys: bill + party + yymm → date
+  var existingMap = {};
+  for (var i = 1; i < existing.length; i++) {
+    var bill = String(existing[i][1] || "").trim();
+    var party = String(existing[i][partyCol] || "").trim();
+    var ym = _yearMonth(existing[i][0]);
+    if (!bill || !party || !ym) continue;
+    var k = bill.toLowerCase() + '||' + party.toLowerCase() + '||' + ym;
+    if (!existingMap[k]) {
+      existingMap[k] = {
+        date: existing[i][0],
+        party: party,
+        bill: bill,
+        rowNum: i + 1
+      };
+    }
+  }
+
+  // Build incoming unique bill keys (one entry per bill, not per item)
+  var incomingBills = {};
+  incomingItems.forEach(function(item) {
+    var bill = String(item.BSOBillNoData || "").trim();
+    var party = String(item.BSOPartyData || "").trim();
+    var ym = _yearMonth(item.BSODateData);
+    if (!bill || !party || !ym) return;
+    var k = bill.toLowerCase() + '||' + party.toLowerCase() + '||' + ym;
+    if (!incomingBills[k]) {
+      incomingBills[k] = {
+        date: item.BSODateData,
+        party: party,
+        bill: bill
+      };
+    }
+  });
+
+  // Compare: a duplicate is when SAME key exists in BOTH but with DIFFERENT date
+  // (same date = re-upload of same bill, that's allowed because writeToSheet replaces date range)
+  var dupes = [];
+  Object.keys(incomingBills).forEach(function(k) {
+    if (existingMap[k]) {
+      var inc = incomingBills[k];
+      var exi = existingMap[k];
+      var incDi = dateToInt(inc.date);
+      var exiDi = dateToInt(exi.date);
+      if (incDi && exiDi && incDi !== exiDi) {
+        dupes.push({
+          billNo: inc.bill,
+          party: inc.party,
+          incomingDate: tallyDateToDisplay(inc.date),
+          existingDate: (exi.date instanceof Date)
+            ? tallyDateToDisplay(Utilities.formatDate(exi.date, Session.getScriptTimeZone(), 'd-M-yyyy'))
+            : String(exi.date),
+          existingRow: exi.rowNum
+        });
+      }
+    }
+  });
+  return dupes;
+}
+
+// ╔══════════════════════════════════════════════════════════╗
+// ║  Sheet writer (with progress)                             ║
+// ╚══════════════════════════════════════════════════════════╝
 function writeToSheet(sheet, headers, newRows, rangeStart, rangeEnd, jobId) {
-  _setProgress(jobId, 65, '📖 Existing sheet padh raha hu...');
+  _setProgress(jobId, 65, '📖 Existing sheet read',
+    'Sheet ka purana data padha ja raha hai...');
   var existing = sheet.getDataRange().getValues();
 
   if (existing.length <= 1) {
-    _setProgress(jobId, 85, '🧹 Sheet clear ho rahi hai...');
+    _setProgress(jobId, 85, '🧹 Sheet clear',
+      'Khali sheet, directly likh rahe hain...');
     sheet.clearContents();
-    _setProgress(jobId, 92, '✏️ ' + newRows.length + ' rows likhi ja rahi hain...');
+    _setProgress(jobId, 92, '✏️ Writing rows',
+      newRows.length + ' rows likhi ja rahi hain...');
     var out = [headers].concat(newRows);
     sheet.getRange(1, 1, out.length, headers.length).setValues(out);
     SpreadsheetApp.flush();
     return;
   }
 
-  _setProgress(jobId, 72, '🔍 Purane data me se range ke rows hata raha hu...');
+  _setProgress(jobId, 72, '🔍 Filtering old rows',
+    (existing.length - 1) + ' purane rows me se range wale hata raha hu...');
   var kept = [];
   for (var i = 1; i < existing.length; i++) {
     var di = dateToInt(existing[i][0]);
     if (di === null || di < rangeStart || di > rangeEnd) kept.push(existing[i]);
   }
 
-  _setProgress(jobId, 80, '📊 ' + (kept.length + newRows.length) + ' rows sort ho rahi hain...');
+  _setProgress(jobId, 80, '📊 Sorting',
+    (kept.length + newRows.length) + ' rows date-wise sort ho rahi hain...');
   var combined = kept.concat(newRows);
   combined.sort(function(a, b) {
     var da = dateToInt(a[0]), db = dateToInt(b[0]);
@@ -235,7 +431,7 @@ function writeToSheet(sheet, headers, newRows, rangeStart, rangeEnd, jobId) {
     return da - db;
   });
 
-  // ── Column count ko normalize karein (kept rows me extra cols ho sakte hain) ──
+  // Column count normalize karo (kept rows me extra/kam cols ho sakte hain)
   var colCount = headers.length;
   for (var k = 0; k < combined.length; k++) {
     var row = combined[k];
@@ -246,58 +442,62 @@ function writeToSheet(sheet, headers, newRows, rangeStart, rangeEnd, jobId) {
     }
   }
 
-  _setProgress(jobId, 88, '🧹 Sheet clear ho rahi hai...');
+  _setProgress(jobId, 88, '🧹 Sheet clear',
+    'Purana data clear ho raha hai...');
   sheet.clearContents();
 
-  _setProgress(jobId, 94, '✏️ Sheet me ' + combined.length + ' rows likhi ja rahi hain...');
+  _setProgress(jobId, 94, '✏️ Writing rows',
+    'Sheet me ' + combined.length + ' rows likhi ja rahi hain...');
   var final = [headers].concat(combined);
   sheet.getRange(1, 1, final.length, colCount).setValues(final);
   SpreadsheetApp.flush();
 }
 
-// ── Voucher Types save ──────────────────────────────────────
-function saveVoucherTypes(reportName, voucherTypes) {
+// ╔══════════════════════════════════════════════════════════╗
+// ║  MAIN: processJSONChunked  (called after all chunks sent) ║
+// ╚══════════════════════════════════════════════════════════╝
+function processJSONChunked(jobId, totalChunks, reportName, sheetName, sheetId, type, selectedVoucherTypes, allowDuplicates) {
+  var lastStage = 'Initial';
   try {
-    var ss       = SpreadsheetApp.getActiveSpreadsheet();
-    var settings = ss.getSheetByName('App_Settings');
-    if (!settings) return "Error: App_Settings nahi mili";
+    _setProgress(jobId, 10, '📦 Chunks assemble',
+      totalChunks + ' chunks ko jod raha hu...');
+    lastStage = 'Chunk assembly';
+    var jsonData = _assembleChunks(jobId, totalChunks);
 
-    var lastRow = settings.getLastRow();
-    var range   = settings.getRange(2, 8, lastRow - 1, 1).getValues();
-
-    for (var i = 0; i < range.length; i++) {
-      var name = String(range[i][0] || "").trim();
-      if (name === reportName) {
-        settings.getRange(i + 2, 12).setValue(voucherTypes.join(", "));
-        return "Saved";
-      }
-    }
-    return "Error: Report nahi mila";
+    return _processJSONInternal(jsonData, reportName, sheetName, sheetId, type, selectedVoucherTypes, allowDuplicates, jobId);
   } catch(e) {
-    return "Error: " + e.toString();
+    _setProgressDone(jobId, 100, '❌ Error in: ' + lastStage, e.toString());
+    return { success: false, message: '❌ ' + lastStage + ' me error: ' + e.toString() };
   }
 }
 
-// ── Main processJSON (with progress jobId) ────────────────────
-function processJSON(jsonData, reportName, sheetName, sheetId, type, selectedVoucherTypes, jobId) {
-  try {
-    _setProgress(jobId, 3, '📥 Server par data pohach gaya...');
+// Backwards-compat: old single-shot upload
+function processJSON(jsonData, reportName, sheetName, sheetId, type, selectedVoucherTypes, jobId, allowDuplicates) {
+  return _processJSONInternal(jsonData, reportName, sheetName, sheetId, type, selectedVoucherTypes, allowDuplicates, jobId);
+}
 
-    // 1. Clean JSON
-    _setProgress(jobId, 8, '🧼 JSON saaf ho raha hai...');
+function _processJSONInternal(jsonData, reportName, sheetName, sheetId, type, selectedVoucherTypes, allowDuplicates, jobId) {
+  var stage = 'Start';
+  var lastItem = '';
+  try {
+    stage = 'JSON cleaning';
+    _setProgress(jobId, 14, '🧼 JSON clean', 'Invalid characters hata raha hu...');
     jsonData = jsonData.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '');
     jsonData = jsonData.replace(/\]\s*,\s*"ItemRow"\s*:\s*\[/g, ',');
 
-    _setProgress(jobId, 14, '📑 JSON parse ho raha hai...');
+    stage = 'JSON parse';
+    _setProgress(jobId, 18, '📑 JSON parse',
+      'Size: ' + Math.round(jsonData.length / 1024) + ' KB');
     var data;
     try { data = JSON.parse(jsonData); }
     catch(parseErr) {
-      _setProgressDone(jobId, 100, '❌ JSON parse fail');
-      return "❌ JSON parse error: " + parseErr.toString();
+      _setProgressDone(jobId, 100, '❌ JSON parse fail', parseErr.toString());
+      return { success: false, message: "❌ JSON parse error: " + parseErr.toString() };
     }
 
-    // 2. Get target sheet
-    _setProgress(jobId, 20, '📂 Target sheet open ho rahi hai...');
+    stage = 'Sheet open';
+    _setProgress(jobId, 22, '📂 Sheet open',
+      'Target: ' + (sheetName || '?'));
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var sheet = null;
 
@@ -307,8 +507,8 @@ function processJSON(jsonData, reportName, sheetName, sheetId, type, selectedVou
           ss = SpreadsheetApp.openById(sheetId);
           sheet = ss.getSheetByName(sheetName);
         } catch(e) {
-          _setProgressDone(jobId, 100, '❌ External spreadsheet open nahi hui');
-          return "❌ Error: Dusri Spreadsheet open nahi hui. Invalid File ID check karein: " + sheetId;
+          _setProgressDone(jobId, 100, '❌ External spreadsheet fail', e.toString());
+          return { success: false, message: "❌ Dusri Spreadsheet open nahi hui. File ID: " + sheetId };
         }
       } else {
         try {
@@ -322,131 +522,178 @@ function processJSON(jsonData, reportName, sheetName, sheetId, type, selectedVou
     if (!sheet && sheetName) sheet = ss.getSheetByName(sheetName);
     if (!sheet && sheetName) sheet = ss.insertSheet(sheetName);
     if (!sheet) {
-      _setProgressDone(jobId, 100, '❌ Sheet nahi mili');
-      return "❌ Sheet nahi ban payi! Name: '" + sheetName + "'";
+      _setProgressDone(jobId, 100, '❌ Sheet nahi mili', 'Name: ' + sheetName);
+      return { success: false, message: "❌ Sheet nahi ban payi! Name: '" + sheetName + "'" };
     }
 
-    // 3. ItemRows nikaalo
-    _setProgress(jobId, 26, '🔎 ItemRow dhundh raha hu...');
+    stage = 'ItemRow extract';
+    _setProgress(jobId, 26, '🔎 ItemRow nikaal raha hu', '');
     var envelope = data.ENVELOPE || data.Envelope || data;
     var itemRows = envelope.ItemRow || envelope.ITEMROW;
     if (!itemRows) {
-      _setProgressDone(jobId, 100, '❌ ItemRow nahi mila');
-      return "❌ JSON mein ItemRow nahi mila.";
+      _setProgressDone(jobId, 100, '❌ ItemRow nahi mila', 'JSON structure check karein');
+      return { success: false, message: "❌ JSON mein ItemRow nahi mila." };
     }
     if (!Array.isArray(itemRows)) itemRows = [itemRows];
 
-    // 4. Validate rows
-    _setProgress(jobId, 32, '✅ ' + itemRows.length + ' rows validate ho rahe hain...');
+    stage = 'Validation';
+    _setProgress(jobId, 32, '✅ Rows validate',
+      itemRows.length + ' rows me se valid filter ho rahe hain...');
     var allValidItems = itemRows.filter(function(r) {
       return r && (r.BSODateData || r.BSOItemData);
     });
     if (allValidItems.length === 0) {
-      _setProgressDone(jobId, 100, '❌ Koi valid data nahi mila');
-      return "❌ Koi valid data nahi mila.";
+      _setProgressDone(jobId, 100, '❌ Valid data nahi', '');
+      return { success: false, message: "❌ Koi valid data nahi mila." };
     }
 
-    // 5. Date range
-    _setProgress(jobId, 38, '📅 Date range nikal raha hu...');
+    stage = 'Date range';
+    _setProgress(jobId, 36, '📅 Date range',
+      allValidItems.length + ' rows ka range nikal raha hu...');
     var allDints = allValidItems.map(function(r){ return dateToInt(r.BSODateData); }).filter(Boolean);
     allDints.sort(function(a,b){ return a-b; });
     var deleteRangeStart = allDints[0];
     var deleteRangeEnd   = allDints[allDints.length - 1];
 
-    // 6. Voucher type filter
+    stage = 'Voucher filter';
     var validItems = allValidItems;
     if (selectedVoucherTypes && selectedVoucherTypes.length > 0) {
-      _setProgress(jobId, 44, '🏷️ Voucher types filter ho rahe hain...');
+      _setProgress(jobId, 40, '🏷️ Voucher filter',
+        selectedVoucherTypes.length + ' types selected');
       var vSet = {};
       selectedVoucherTypes.forEach(function(v){ vSet[v.trim().toLowerCase()] = 1; });
       validItems = allValidItems.filter(function(r){
         return r.BSOVoucherTypeData && vSet[r.BSOVoucherTypeData.toString().trim().toLowerCase()];
       });
       if (validItems.length === 0) {
-        _setProgressDone(jobId, 100, '❌ Selected voucher types me data nahi mila');
-        return "❌ Selected voucher types mein koi data nahi mila.";
+        _setProgressDone(jobId, 100, '❌ Filter ke baad data nahi', '');
+        return { success: false, message: "❌ Selected voucher types mein koi data nahi mila." };
       }
     }
 
-    var newRows = [], dints = [];
-
-    // ── COMPACT mode ──────────────────────────────────────────
-    if (type === "COMPACT") {
-      _setProgress(jobId, 50, '🧾 Bills group ho rahe hain (' + validItems.length + ' rows)...');
-      var bills = groupByBill(validItems);
-
-      _setProgress(jobId, 58, '📦 ' + bills.length + ' bills tayar ho rahi hain...');
-      var headers = ["Date", "Bill No", "Party Name", "Voucher Type", "Items_JSON", "Narration"];
-      bills.forEach(function(b) {
-        var di = dateToInt(b.date);
-        dints.push(di);
-        newRows.push([
-          tallyDateToDisplay(b.date),
-          b.billNo,
-          b.party,
-          b.vchType,
-          JSON.stringify(b.items),
-          b.narr
-        ]);
-      });
-
-      writeToSheet(sheet, headers, newRows, deleteRangeStart, deleteRangeEnd, jobId);
-
-      _setProgressDone(jobId, 100, '✅ Done! ' + bills.length + ' bills update ho gayi');
-      return "✅ Done! [COMPACT]\n" +
-             "🗓 Range: " + intToDisplay(deleteRangeStart) + " → " + intToDisplay(deleteRangeEnd) + "\n" +
-             "🧾 Bills: " + bills.length + " rows";
+    stage = 'Duplicate detection';
+    if (!allowDuplicates) {
+      var dupes = _detectDuplicatesAgainstSheet(sheet, validItems, type, jobId);
+      if (dupes.length > 0) {
+        _setProgressDone(jobId, 100, '⚠️ Duplicate bills mile',
+          dupes.length + ' bills already mojud hain alag date ke saath');
+        return {
+          success: false,
+          duplicate: true,
+          message: '⚠️ Duplicate detected: ' + dupes.length + ' bill(s) already exist with different dates',
+          duplicates: dupes
+        };
+      }
     }
 
-    // ── DETAILED mode ─────────────────────────────────────────
+    var newRows = [];
+
+    if (type === "COMPACT") {
+      stage = 'Group bills (COMPACT)';
+      var bills = groupByBill(validItems, jobId);
+
+      stage = 'Build rows (COMPACT)';
+      _setProgress(jobId, 60, '📦 Rows build',
+        bills.length + ' bills me se rows banayi ja rahi hain...');
+      var headers = ["Date", "Bill No", "Party Name", "Voucher Type", "Items_JSON", "Narration"];
+      bills.forEach(function(b, idx) {
+        if (idx % 100 === 0) {
+          lastItem = b.party + ' / ' + b.billNo;
+          _setProgress(jobId, 60 + Math.round(idx / bills.length * 4),
+            '📦 Rows build', 'Bill ' + (idx+1) + '/' + bills.length + ' — ' + lastItem);
+        }
+        try {
+          newRows.push([
+            tallyDateToDisplay(b.date),
+            b.billNo,
+            b.party,
+            b.vchType,
+            JSON.stringify(b.items),
+            b.narr
+          ]);
+        } catch(rowErr) {
+          throw new Error('Bill banane me error: ' + b.party + ' / ' + b.billNo + ' — ' + rowErr.toString());
+        }
+      });
+
+      stage = 'Write to sheet';
+      writeToSheet(sheet, headers, newRows, deleteRangeStart, deleteRangeEnd, jobId);
+
+      _setProgressDone(jobId, 100, '✅ Done!', bills.length + ' bills update ho gayi');
+      return {
+        success: true,
+        message: "✅ Done! [COMPACT]\n" +
+                 "🗓 Range: " + intToDisplay(deleteRangeStart) + " → " + intToDisplay(deleteRangeEnd) + "\n" +
+                 "🧾 Bills: " + bills.length + " rows"
+      };
+    }
     else if (type === "DETAILED") {
-      _setProgress(jobId, 50, '📋 ' + validItems.length + ' rows tayar ho rahi hain...');
+      stage = 'Build rows (DETAILED)';
+      _setProgress(jobId, 50, '📋 Rows build',
+        validItems.length + ' rows tayar ho rahi hain...');
       var headers = [
         "Date", "Bill No", "Stock Item", "Godown", "Batch No", "Mfg Date", "Exp Date",
         "Qty In", "Qty Out", "Rate", "Value", "Tax Rate", "Bill Total",
         "Party Name", "Voucher Type", "Narration", "MRP"
       ];
 
-      validItems.forEach(function(item) {
-        var di = dateToInt(item.BSODateData);
-        dints.push(di);
-        var rawVal = parseFloat(item.BSOTotalValueData) || 0;
-        var absVal = rawVal !== 0 ? Math.abs(rawVal) : "";
-        newRows.push([
-          tallyDateToDisplay(item.BSODateData    || ""),
-          item.BSOBillNoData                     || "",
-          item.BSOItemData                       || "",
-          item.BSOGodownData                     || "",
-          item.BSOBatchNoData                    || "",
-          tallyDateToDisplay(item.BSOMfgDateData || ""),
-          tallyDateToDisplay(item.BSOExpDateData || ""),
-          item.BSOQtyInData                      || "",
-          item.BSOQtyOutData                     || "",
-          item.BSORateData                       || "",
-          absVal,
-          item.BSOTaxRateData                    || "",
-          item.BSOTaxAmountData                  || "",
-          item.BSOPartyData                      || "",
-          item.BSOVoucherTypeData                || "",
-          item.BSONarrationData                  || "",
-          item.BSOMRPData                        || ""
-        ]);
+      validItems.forEach(function(item, idx) {
+        if (idx % 200 === 0) {
+          lastItem = (item.BSOPartyData || '?') + ' / ' + (item.BSOBillNoData || '?') + ' / ' + (item.BSOItemData || '?');
+          _setProgress(jobId, 50 + Math.round(idx / validItems.length * 12),
+            '📋 Rows build',
+            'Row ' + (idx+1) + '/' + validItems.length + ' — ' + lastItem);
+        }
+        try {
+          var rawVal = parseFloat(item.BSOTotalValueData) || 0;
+          var absVal = rawVal !== 0 ? Math.abs(rawVal) : "";
+          newRows.push([
+            tallyDateToDisplay(item.BSODateData    || ""),
+            item.BSOBillNoData                     || "",
+            item.BSOItemData                       || "",
+            item.BSOGodownData                     || "",
+            item.BSOBatchNoData                    || "",
+            tallyDateToDisplay(item.BSOMfgDateData || ""),
+            tallyDateToDisplay(item.BSOExpDateData || ""),
+            item.BSOQtyInData                      || "",
+            item.BSOQtyOutData                     || "",
+            item.BSORateData                       || "",
+            absVal,
+            item.BSOTaxRateData                    || "",
+            item.BSOTaxAmountData                  || "",
+            item.BSOPartyData                      || "",
+            item.BSOVoucherTypeData                || "",
+            item.BSONarrationData                  || "",
+            item.BSOMRPData                        || ""
+          ]);
+        } catch(rowErr) {
+          throw new Error('Row banane me error: ' + lastItem + ' — ' + rowErr.toString());
+        }
       });
 
+      stage = 'Write to sheet';
       writeToSheet(sheet, headers, newRows, deleteRangeStart, deleteRangeEnd, jobId);
 
-      _setProgressDone(jobId, 100, '✅ Done! ' + newRows.length + ' rows update ho gayi');
-      return "✅ Done! [DETAILED]\n" +
-             "🗓 Range: " + intToDisplay(deleteRangeStart) + " → " + intToDisplay(deleteRangeEnd) + "\n" +
-             "📋 Rows: " + newRows.length;
+      _setProgressDone(jobId, 100, '✅ Done!', newRows.length + ' rows update ho gayi');
+      return {
+        success: true,
+        message: "✅ Done! [DETAILED]\n" +
+                 "🗓 Range: " + intToDisplay(deleteRangeStart) + " → " + intToDisplay(deleteRangeEnd) + "\n" +
+                 "📋 Rows: " + newRows.length
+      };
     }
     else {
-      _setProgressDone(jobId, 100, '❌ Unknown type');
-      return "❌ Unknown type: '" + type + "'. App_Settings mein COMPACT ya DETAILED likhein.";
+      _setProgressDone(jobId, 100, '❌ Unknown type', type);
+      return { success: false, message: "❌ Unknown type: '" + type + "'. App_Settings mein COMPACT ya DETAILED likhein." };
     }
 
   } catch(e) {
-    _setProgressDone(jobId, 100, '❌ ' + e.toString());
-    return "❌ Error: " + e.toString();
+    _setProgressDone(jobId, 100, '❌ Error in: ' + stage,
+      (lastItem ? 'Last: ' + lastItem + ' — ' : '') + e.toString());
+    return {
+      success: false,
+      message: "❌ Stage [" + stage + "] me error: " + e.toString() +
+               (lastItem ? '\n📍 Last processed: ' + lastItem : '')
+    };
   }
 }
