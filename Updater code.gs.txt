@@ -1,0 +1,361 @@
+// ── Month names for DD-Mmm-YYYY format ──────────────────────
+var MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+// ── Tally date (D-M-YYYY) → DD-Mmm-YYYY ─────────────────────
+// e.g. "1-4-2025"  →  "01-Apr-2025"
+// e.g. "31-12-2025" → "31-Dec-2025"
+// Agar date blank ya invalid ho toh original value return hogi
+function tallyDateToDisplay(s) {
+  if (!s) return s;
+  var str = String(s).trim();
+  if (!str) return str;
+
+  var p = str.split('-');
+  if (p.length !== 3) return str;
+
+  var d = parseInt(p[0], 10);
+  var m = parseInt(p[1], 10);
+  var y = parseInt(p[2], 10);
+
+  if (isNaN(d) || isNaN(m) || isNaN(y) || m < 1 || m > 12) return str;
+
+  return (d < 10 ? '0' + d : String(d)) + '-' + MONTHS_SHORT[m - 1] + '-' + y;
+}
+
+// ── doGet & menu ─────────────────────────────────────────────
+function doGet(e) {
+  return HtmlService.createHtmlOutputFromFile('Upload')
+      .setTitle('Pflanze Pharma - JSON Uploader')
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+function onOpen() {
+  var ui = SpreadsheetApp.getUi();
+  ui.createMenu('Pflanze Pharma')
+      .addItem('Upload Tally JSON', 'showUploadDialog')
+      .addToUi();
+}
+
+function showUploadDialog() {
+  var html = HtmlService.createHtmlOutputFromFile('Upload')
+      .setWidth(480)
+      .setHeight(620)
+      .setTitle('Upload Stock Data');
+  SpreadsheetApp.getUi().showModalDialog(html, 'Upload Stock Data');
+}
+
+// ── App_Settings se reports list lo ──────────────────────────
+function getReportSettings() {
+  try {
+    var ss       = SpreadsheetApp.getActiveSpreadsheet();
+    var settings = ss.getSheetByName('App_Settings');
+    if (!settings) return { error: "App_Settings sheet nahi mili!" };
+
+    var lastRow = settings.getLastRow();
+    if (lastRow < 2) return { error: "App_Settings mein koi data nahi." };
+
+    var range = settings.getRange(2, 8, lastRow - 1, 5).getValues();
+    var reports = [];
+
+    range.forEach(function(row) {
+      var name       = String(row[0] || "").trim();
+      var sheet      = String(row[1] || "").trim();
+      var sheetId    = String(row[2] || "").trim();
+      var type       = String(row[3] || "").trim();
+      var savedTypes = String(row[4] || "").trim();
+
+      var voucherTypes = savedTypes
+        ? savedTypes.split(",").map(function(v){ return v.trim(); }).filter(Boolean)
+        : [];
+
+      if (name) {
+        reports.push({ name: name, sheet: sheet, sheetId: sheetId, type: type, savedVoucherTypes: voucherTypes });
+      }
+    });
+
+    return { reports: reports };
+  } catch(e) {
+    return { error: e.toString() };
+  }
+}
+
+// ── Date helpers ──────────────────────────────────────────────
+//
+// UPDATED: Ab dateToInt() dono formats handle karta hai:
+//   1) Tally raw format  → D-M-YYYY    (e.g. "1-4-2025")
+//   2) Display format    → DD-Mmm-YYYY (e.g. "01-Apr-2025")
+//      (yeh sheet mein already saved rows ke liye zaruri hai)
+//
+function dateToInt(s) {
+  if (!s) return null;
+  if (s instanceof Date) {
+    if (isNaN(s.getTime())) return null;
+    return s.getFullYear() * 10000 + (s.getMonth() + 1) * 100 + s.getDate();
+  }
+  var str = String(s).trim();
+  if (!str) return null;
+
+  var p = str.split('-');
+  if (p.length !== 3) return null;
+
+  // Format check: kya beech wala part month name hai? (DD-Mmm-YYYY)
+  var monthIdx = MONTHS_SHORT.indexOf(p[1]);
+  if (monthIdx !== -1) {
+    var d = parseInt(p[0], 10);
+    var m = monthIdx + 1;
+    var y = parseInt(p[2], 10);
+    if (isNaN(d) || isNaN(y)) return null;
+    return y * 10000 + m * 100 + d;
+  }
+
+  // Warna original Tally format: D-M-YYYY
+  var d = parseInt(p[0], 10), m = parseInt(p[1], 10), y = parseInt(p[2], 10);
+  if (isNaN(d) || isNaN(m) || isNaN(y)) return null;
+  return y * 10000 + m * 100 + d;
+}
+
+function intToDisplay(n) {
+  if (!n) return '?';
+  var y = Math.floor(n / 10000);
+  var m = Math.floor((n % 10000) / 100);
+  var d = n % 100;
+  return (d < 10 ? '0'+d : d) + '-' + MONTHS_SHORT[m-1] + '-' + y;
+}
+
+// ── COMPACT: Group items by bill → one row per bill ───────────
+function makeBillKey(item) {
+  return [
+    item.BSODateData        || "",
+    item.BSOBillNoData      || "",
+    item.BSOPartyData       || "",
+    item.BSOVoucherTypeData || ""
+  ].join("||");
+}
+
+function groupByBill(itemRows) {
+  var order = [], map = {};
+  itemRows.forEach(function(item) {
+    if (!item || (!item.BSODateData && !item.BSOItemData)) return;
+    var key = makeBillKey(item);
+    if (!map[key]) {
+      order.push(key);
+      map[key] = {
+        date:    item.BSODateData        || "",
+        billNo:  item.BSOBillNoData      || "",
+        party:   item.BSOPartyData       || "",
+        vchType: item.BSOVoucherTypeData || "",
+        narr:    item.BSONarrationData   || "",
+        items:   []
+      };
+    }
+    if (!map[key].narr && item.BSONarrationData) map[key].narr = item.BSONarrationData;
+    if (item.BSOItemData) {
+      map[key].items.push({
+        Itm:  item.BSOItemData       || "",
+        Bch:  item.BSOBatchNoData    || "",
+        // ── Mfg/Exp dates bhi convert karo Items_JSON ke andar ──
+        Mfg:  tallyDateToDisplay(item.BSOMfgDateData  || ""),
+        Exp:  tallyDateToDisplay(item.BSOExpDateData  || ""),
+        MRP:  item.BSOMRPData        || "",   // ── NAYA: MRP ──
+        QIn:  item.BSOQtyInData      || 0,
+        QOut: item.BSOQtyOutData     || 0,
+        Rt:   item.BSORateData       || 0,
+        Val:  item.BSOTotalValueData || 0,
+        Tax:  item.BSOTaxAmountData  || 0
+      });
+    }
+  });
+  return order.map(function(k) { return map[k]; });
+}
+
+// ── Sheet writer (shared logic) ───────────────────────────────
+function writeToSheet(sheet, headers, newRows, rangeStart, rangeEnd) {
+  var existing = sheet.getDataRange().getValues();
+  if (existing.length <= 1) {
+    sheet.clearContents();
+    var out = [headers].concat(newRows);
+    sheet.getRange(1, 1, out.length, headers.length).setValues(out);
+    return;
+  }
+
+  var kept = [];
+  for (var i = 1; i < existing.length; i++) {
+    var di = dateToInt(existing[i][0]);
+    if (di === null || di < rangeStart || di > rangeEnd) kept.push(existing[i]);
+  }
+
+  var combined = kept.concat(newRows);
+  combined.sort(function(a, b) {
+    var da = dateToInt(a[0]), db = dateToInt(b[0]);
+    if (da === null && db === null) return 0;
+    if (da === null) return 1;
+    if (db === null) return -1;
+    return da - db;
+  });
+
+  sheet.clearContents();
+  var final = [headers].concat(combined);
+  sheet.getRange(1, 1, final.length, headers.length).setValues(final);
+}
+
+// ── Voucher Types ko App_Settings L column mein save karo ──
+function saveVoucherTypes(reportName, voucherTypes) {
+  try {
+    var ss       = SpreadsheetApp.getActiveSpreadsheet();
+    var settings = ss.getSheetByName('App_Settings');
+    if (!settings) return "Error: App_Settings nahi mili";
+
+    var lastRow = settings.getLastRow();
+    var range   = settings.getRange(2, 8, lastRow - 1, 1).getValues();
+
+    for (var i = 0; i < range.length; i++) {
+      var name = String(range[i][0] || "").trim();
+      if (name === reportName) {
+        settings.getRange(i + 2, 12).setValue(voucherTypes.join(", "));
+        return "Saved";
+      }
+    }
+    return "Error: Report nahi mila";
+  } catch(e) {
+    return "Error: " + e.toString();
+  }
+}
+
+// ── Main processJSON ──────────────────────────────────────────
+function processJSON(jsonData, reportName, sheetName, sheetId, type, selectedVoucherTypes) {
+  try {
+    // 1. Clean JSON
+    jsonData = jsonData.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '');
+    jsonData = jsonData.replace(/\]\s*,\s*"ItemRow"\s*:\s*\[/g, ',');
+    var data = JSON.parse(jsonData);
+
+    // 2. Get target sheet
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = null;
+
+    if (sheetId && sheetId !== "") {
+      if (sheetId.length > 15) {
+        try {
+          ss = SpreadsheetApp.openById(sheetId);
+          sheet = ss.getSheetByName(sheetName);
+        } catch(e) {
+          return "❌ Error: Dusri Spreadsheet open nahi hui. Invalid File ID check karein: " + sheetId;
+        }
+      } else {
+        try {
+          sheet = ss.getSheets().filter(function(s) {
+            return s.getSheetId().toString() === sheetId.toString();
+          })[0];
+        } catch(e) { sheet = null; }
+      }
+    }
+
+    if (!sheet && sheetName) sheet = ss.getSheetByName(sheetName);
+    if (!sheet && sheetName) sheet = ss.insertSheet(sheetName);
+    if (!sheet) return "❌ Sheet nahi ban payi! Name: '" + sheetName + "'";
+
+    // 3. ItemRows
+    var envelope = data.ENVELOPE || data.Envelope || data;
+    var itemRows = envelope.ItemRow || envelope.ITEMROW;
+    if (!itemRows) return "❌ JSON mein ItemRow nahi mila.";
+    if (!Array.isArray(itemRows)) itemRows = [itemRows];
+
+    // 4. Filter valid rows
+    var allValidItems = itemRows.filter(function(r) {
+      return r && (r.BSODateData || r.BSOItemData);
+    });
+    if (allValidItems.length === 0) return "❌ Koi valid data nahi mila.";
+
+    var allDints = allValidItems.map(function(r){ return dateToInt(r.BSODateData); }).filter(Boolean);
+    allDints.sort(function(a,b){ return a-b; });
+    var deleteRangeStart = allDints[0];
+    var deleteRangeEnd   = allDints[allDints.length - 1];
+
+    var validItems = allValidItems;
+    if (selectedVoucherTypes && selectedVoucherTypes.length > 0) {
+      var vSet = {};
+      selectedVoucherTypes.forEach(function(v){ vSet[v.trim().toLowerCase()] = 1; });
+      validItems = allValidItems.filter(function(r){
+        return r.BSOVoucherTypeData && vSet[r.BSOVoucherTypeData.toString().trim().toLowerCase()];
+      });
+      if (validItems.length === 0) return "❌ Selected voucher types mein koi data nahi mila.";
+    }
+
+    var newRows = [], dints = [];
+
+    // ── COMPACT mode ──────────────────────────────────────────
+    if (type === "COMPACT") {
+      var bills = groupByBill(validItems);
+      var headers = ["Date", "Bill No", "Party Name", "Voucher Type", "Items_JSON", "Narration"];
+      bills.forEach(function(b) {
+        var di = dateToInt(b.date);
+        dints.push(di);
+        newRows.push([
+          tallyDateToDisplay(b.date),   // ✅ "1-4-2025" → "01-Apr-2025"
+          b.billNo,
+          b.party,
+          b.vchType,
+          JSON.stringify(b.items),
+          b.narr
+        ]);
+      });
+
+      dints = dints.filter(Boolean);
+      dints.sort(function(a,b){ return a-b; });
+      writeToSheet(sheet, headers, newRows, deleteRangeStart, deleteRangeEnd);
+
+      return "✅ Done! [COMPACT]\n" +
+             "🗓 Range: " + intToDisplay(deleteRangeStart) + " → " + intToDisplay(deleteRangeEnd) + "\n" +
+             "🧾 Bills: " + bills.length + " rows";
+    }
+
+    // ── DETAILED mode ─────────────────────────────────────────
+    else if (type === "DETAILED") {
+      var headers = [
+        "Date", "Bill No", "Stock Item", "Godown", "Batch No", "Mfg Date", "Exp Date",
+        "Qty In", "Qty Out", "Rate", "Value", "Tax Rate", "Bill Total",
+        "Party Name", "Voucher Type", "Narration", "MRP"   // ── NAYA ──
+      ];
+
+      validItems.forEach(function(item) {
+        var di = dateToInt(item.BSODateData);
+        dints.push(di);
+        var rawVal = parseFloat(item.BSOTotalValueData) || 0;
+        var absVal = rawVal !== 0 ? Math.abs(rawVal) : "";
+        newRows.push([
+          tallyDateToDisplay(item.BSODateData    || ""),  // ✅ "1-4-2025"  → "01-Apr-2025"
+          item.BSOBillNoData                     || "",
+          item.BSOItemData                       || "",
+          item.BSOGodownData                     || "",
+          item.BSOBatchNoData                    || "",
+          tallyDateToDisplay(item.BSOMfgDateData || ""),  // ✅ Mfg date convert
+          tallyDateToDisplay(item.BSOExpDateData || ""),  // ✅ Exp date convert
+          item.BSOQtyInData                      || "",
+          item.BSOQtyOutData                     || "",
+          item.BSORateData                       || "",
+          absVal,
+          item.BSOTaxRateData                    || "",
+          item.BSOTaxAmountData                  || "",
+          item.BSOPartyData                      || "",
+          item.BSOVoucherTypeData                || "",
+          item.BSONarrationData                  || "",
+          item.BSOMRPData                        || ""    // ── NAYA: MRP ──
+        ]);
+      });
+
+      dints = dints.filter(Boolean);
+      dints.sort(function(a,b){ return a-b; });
+      writeToSheet(sheet, headers, newRows, deleteRangeStart, deleteRangeEnd);
+
+      return "✅ Done! [DETAILED]\n" +
+             "🗓 Range: " + intToDisplay(deleteRangeStart) + " → " + intToDisplay(deleteRangeEnd) + "\n" +
+             "📋 Rows: " + newRows.length;
+    }
+    else {
+      return "❌ Unknown type: '" + type + "'. App_Settings mein COMPACT ya DETAILED likhein.";
+    }
+
+  } catch(e) {
+    return "❌ Error: " + e.toString();
+  }
+}

@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0d0f14;
+      --surface: #13161e;
+      --surface2: #1a1e2a;
+      --border: #252836;
+      --accent: #4f8ef7;
+      --accent2: #7c3aed;
+      --text: #e8eaf2;
+      --muted: #5a6080;
+      --success: #22c55e;
+      --error: #ef4444;
+      --success-bg: rgba(34,197,94,0.08);
+      --error-bg: rgba(239,68,68,0.08);
+      --compact: #a855f7;
+      --detailed: #38bdf8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; }
+    body { background: var(--bg); font-family: 'Inter', sans-serif; color: var(--text); display: flex; flex-direction: column; }
+
+    /* ── Topbar ── */
+    .topbar {
+      height: 52px; flex-shrink: 0;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; padding: 0 20px; gap: 16px;
+    }
+    .back-btn {
+      display: flex; align-items: center; gap: 6px;
+      background: transparent; border: 1px solid var(--border);
+      color: var(--muted); font-size: 12px; font-weight: 500;
+      padding: 5px 12px; border-radius: 6px; cursor: pointer;
+      transition: all 0.15s; text-decoration: none;
+      font-family: 'Inter', sans-serif;
+    }
+    .back-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .refresh-btn {
+      display: flex; align-items: center; gap: 5px;
+      background: transparent; border: 1px solid var(--border);
+      color: var(--muted); font-size: 12px; font-weight: 500;
+      padding: 5px 12px; border-radius: 6px; cursor: pointer;
+      transition: all 0.15s; font-family: 'Inter', sans-serif;
+    }
+    .refresh-btn:hover { border-color: var(--success); color: var(--success); }
+    .topbar-title {
+      font-size: 13px; font-weight: 700; color: var(--text);
+      letter-spacing: 0.04em; text-transform: uppercase;
+    }
+    .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+    .topbar-badge {
+      font-size: 11px; font-weight: 600; padding: 3px 10px;
+      border-radius: 20px; letter-spacing: 0.05em;
+    }
+    .badge-compact  { background: rgba(168,85,247,0.15); color: var(--compact); border: 1px solid rgba(168,85,247,0.3); }
+    .badge-detailed { background: rgba(56,189,248,0.15); color: var(--detailed); border: 1px solid rgba(56,189,248,0.3); }
+
+    /* ── Main layout ── */
+    .main {
+      flex: 1; display: grid;
+      grid-template-columns: 1fr 320px;
+      overflow: hidden;
+    }
+
+    /* ── LEFT: Upload Panel ── */
+    .upload-panel {
+      display: flex; flex-direction: column;
+      padding: 28px; gap: 20px; overflow-y: auto;
+      border-right: 1px solid var(--border);
+    }
+    .upload-panel::-webkit-scrollbar { width: 4px; }
+    .upload-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    .section-label {
+      font-size: 10px; font-weight: 700; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--muted); margin-bottom: 8px;
+    }
+
+    /* Drop Zone */
+    .drop-zone {
+      border: 1.5px dashed var(--border);
+      border-radius: 12px; padding: 40px 24px;
+      text-align: center; background: var(--surface);
+      transition: all 0.2s; cursor: pointer; user-select: none;
+    }
+    .drop-zone:hover    { border-color: var(--accent); background: rgba(79,142,247,0.05); }
+    .drop-zone.dragover { border-color: var(--accent); background: rgba(79,142,247,0.08); transform: scale(1.005); }
+    .drop-zone.loaded   { border-color: var(--success); border-style: solid; background: rgba(34,197,94,0.05); }
+    .dz-icon { font-size: 32px; margin-bottom: 10px; }
+    .dz-title { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+    .dz-sub   { font-size: 12px; color: var(--muted); line-height: 1.5; }
+    .dz-sub strong { color: var(--accent); }
+    .drop-zone.loaded .dz-sub { display: none; }
+    .drop-zone.loaded .dz-icon-def  { display: none; }
+    .drop-zone.loaded .dz-icon-done { display: block; }
+    .dz-icon-done { display: none; }
+    .dz-loaded-name { font-size: 13px; font-weight: 600; color: var(--success); margin-top: 6px; display: none; }
+    .drop-zone.loaded .dz-loaded-name { display: block; }
+
+    .change-link { text-align: center; font-size: 11px; color: var(--muted); display: none; cursor: pointer; margin-top: 8px; }
+    .change-link span { color: var(--accent); }
+    .change-link span:hover { text-decoration: underline; }
+    .change-link.show { display: block; }
+
+    /* Select */
+    .styled-select {
+      width: 100%; border: 1px solid var(--border); border-radius: 8px;
+      padding: 10px 36px 10px 12px; font-family: 'Inter', sans-serif;
+      font-size: 13px; color: var(--text); background: var(--surface);
+      outline: none; cursor: pointer; appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%235a6080' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 12px center;
+      transition: border-color 0.2s;
+    }
+    .styled-select:focus { border-color: var(--accent); }
+    .styled-select:disabled { color: var(--muted); cursor: not-allowed; }
+    .styled-select option { background: #1a1e2a; }
+
+    /* Type pill */
+    .type-pill {
+      display: none; align-items: center; gap: 8px;
+      padding: 8px 14px; border-radius: 8px; font-size: 12px; font-weight: 600;
+    }
+    .type-pill.show { display: flex; }
+    .type-pill.COMPACT  { background: rgba(168,85,247,0.1); color: var(--compact); border: 1px solid rgba(168,85,247,0.25); }
+    .type-pill.DETAILED { background: rgba(56,189,248,0.1); color: var(--detailed); border: 1px solid rgba(56,189,248,0.25); }
+    .pill-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+    .pill-desc { font-weight: 400; opacity: 0.75; font-size: 11px; }
+
+    /* Upload button */
+    .upload-btn {
+      width: 100%; padding: 13px; background: var(--accent); border: none;
+      border-radius: 8px; color: #fff; font-family: 'Inter', sans-serif;
+      font-size: 14px; font-weight: 700; cursor: pointer; transition: all 0.2s;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      letter-spacing: 0.02em;
+    }
+    .upload-btn:hover:not(:disabled) { background: #3a7af0; }
+    .upload-btn:disabled { background: var(--border); color: var(--muted); cursor: not-allowed; }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner { width: 15px; height: 15px; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: spin 0.7s linear infinite; }
+
+    .status-msg {
+      padding: 10px 14px; border-radius: 8px; font-size: 12px;
+      font-weight: 500; display: none; line-height: 1.6; white-space: pre-line;
+    }
+    .status-msg.show    { display: block; }
+    .status-msg.success { background: var(--success-bg); color: var(--success); border: 1px solid rgba(34,197,94,0.2); }
+    .status-msg.error   { background: var(--error-bg);   color: var(--error);   border: 1px solid rgba(239,68,68,0.2); }
+    .status-msg.loading { background: rgba(79,142,247,0.08); color: var(--accent); border: 1px solid rgba(79,142,247,0.2); }
+
+    /* ── RIGHT: Preview Panel ── */
+    .preview-panel {
+      background: var(--surface); display: flex; flex-direction: column;
+      overflow: hidden;
+    }
+    .preview-topbar {
+      padding: 14px 18px; border-bottom: 1px solid var(--border);
+      font-size: 11px; font-weight: 700; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--muted);
+      display: flex; align-items: center; gap: 8px;
+    }
+    .preview-body { flex: 1; overflow-y: auto; padding: 0; }
+    .preview-body::-webkit-scrollbar { width: 4px; }
+    .preview-body::-webkit-scrollbar-thumb { background: var(--border); }
+
+    .preview-empty {
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      height: 100%; gap: 10px; color: var(--muted); text-align: center; padding: 24px;
+    }
+    .preview-empty-icon { font-size: 36px; opacity: 0.4; }
+    .preview-empty-text { font-size: 12px; line-height: 1.6; }
+
+    .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--border); margin-bottom: 1px; }
+    .stat-cell {
+      background: var(--surface); padding: 16px 16px;
+    }
+    .stat-label { font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 5px; }
+    .stat-val   { font-size: 20px; font-weight: 800; color: var(--text); }
+    .stat-val.green  { color: var(--success); }
+    .stat-val.blue   { color: var(--accent); }
+    .stat-val.purple { color: var(--compact); }
+
+    .detail-list { }
+    .detail-row {
+      display: flex; justify-content: space-between; align-items: flex-start;
+      padding: 11px 18px; border-bottom: 1px solid var(--border);
+      font-size: 12px; gap: 12px;
+    }
+    .detail-row:last-child { border-bottom: none; }
+    .detail-key { color: var(--muted); font-weight: 500; flex-shrink: 0; }
+    .detail-val { color: var(--text); font-weight: 600; text-align: right; word-break: break-word; }
+    .detail-val.accent { color: var(--accent); }
+    .detail-val.success { color: var(--success); }
+
+    .date-range-bar {
+      margin: 0; padding: 14px 18px;
+      background: rgba(79,142,247,0.07);
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 8px;
+    }
+    .date-from, .date-to { font-size: 13px; font-weight: 700; color: var(--accent); }
+    .date-arrow { flex: 1; text-align: center; color: var(--muted); font-size: 14px; }
+
+    .voucher-tags { display: flex; flex-wrap: wrap; gap: 6px; padding: 14px 18px; border-bottom: 1px solid var(--border); }
+    .vtag {
+      font-size: 11px; font-weight: 600; padding: 4px 12px;
+      border-radius: 20px; background: var(--surface2);
+      border: 1px solid var(--border); color: var(--muted);
+      cursor: pointer; transition: all 0.15s; user-select: none;
+    }
+    .vtag:hover { border-color: var(--accent); color: var(--text); }
+    .vtag.selected {
+      background: rgba(34,197,94,0.12); border-color: var(--success);
+      color: var(--success);
+    }
+    .vtag-hint {
+      font-size: 10px; color: var(--muted); padding: 0 18px 10px;
+      font-style: italic;
+    }
+    .vtag-actions {
+      display: flex; gap: 8px; padding: 0 18px 12px; 
+    }
+    .vtag-action-btn {
+      font-size: 10px; font-weight: 600; padding: 3px 10px;
+      border-radius: 20px; cursor: pointer; transition: all 0.15s;
+      border: 1px solid var(--border); background: transparent;
+      color: var(--muted); font-family: 'Inter', sans-serif;
+    }
+    .vtag-action-btn:hover { border-color: var(--accent); color: var(--accent); }
+  </style>
+</head>
+<body>
+
+  <!-- Topbar -->
+  <div class="topbar">
+    <a href="<?= getScriptUrl() ?>" class="back-btn">← Dashboard</a>
+    <div class="topbar-title">Data Upload</div>
+    <div class="topbar-right">
+      <div class="topbar-badge" id="topBadge" style="display:none"></div>
+      <button class="refresh-btn" onclick="refreshPage()" title="Refresh">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        Refresh
+      </button>
+    </div>
+  </div>
+
+  <!-- Main -->
+  <div class="main">
+
+    <!-- LEFT: Upload -->
+    <div class="upload-panel">
+
+      <div>
+        <div class="section-label">JSON File</div>
+        <div class="drop-zone" id="dropZone" onclick="openPicker()">
+          <div class="dz-icon">
+            <span class="dz-icon-def">📂</span>
+            <span class="dz-icon-done">✅</span>
+          </div>
+          <div class="dz-title">Drop JSON File Here</div>
+          <div class="dz-sub">Ya <strong>click karein</strong> file choose karne ke liye</div>
+          <div class="dz-loaded-name" id="loadedName"></div>
+        <div class="change-link" id="changeLink"><span onclick="openPicker(event)">Change file</span></div>
+        </div>
+        <input type="file" id="fileInput" accept=".json" style="display:none" onchange="handleFile(this)">
+      </div>
+
+      <div>
+        <div class="section-label">Report</div>
+        <select class="styled-select" id="reportSelect" onchange="onReportChange()" disabled>
+          <option value="">— Loading... —</option>
+        </select>
+      </div>
+
+      <div class="type-pill" id="typePill" style="display:none"></div>
+
+      <button class="upload-btn" id="uploadBtn" onclick="startUpload()" disabled>
+        ↑ Upload to Sheet
+      </button>
+
+      <div class="status-msg" id="statusMsg"></div>
+
+    </div>
+
+    <!-- RIGHT: Preview -->
+    <div class="preview-panel">
+      <div class="preview-topbar">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+        Data Preview
+      </div>
+      <div class="preview-body" id="previewBody">
+        <div class="preview-empty">
+          <div class="preview-empty-icon">📊</div>
+          <div class="preview-empty-text">File load hone ke baad<br>preview yahan dikhega</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+<script>
+  var loadedData  = '';
+  var reportsData = [];
+
+  window.onload = function() {
+    google.script.run
+      .withSuccessHandler(function(res) {
+        var sel = document.getElementById('reportSelect');
+        if (res.error) { sel.innerHTML = '<option value="">❌ ' + res.error + '</option>'; return; }
+        reportsData = res.reports;
+        sel.innerHTML = '<option value="">— Select report —</option>';
+        res.reports.forEach(function(r, i) {
+          var opt = document.createElement('option');
+          opt.value = i; opt.textContent = r.name;
+          sel.appendChild(opt);
+        });
+        sel.disabled = false;
+      })
+      .withFailureHandler(function() {
+        document.getElementById('reportSelect').innerHTML = '<option value="">❌ Settings load nahi hui</option>';
+      })
+      .getReportSettings();
+  };
+
+  function onReportChange() {
+    var idx = document.getElementById('reportSelect').value;
+    var top = document.getElementById('topBadge');
+
+    if (idx === '') {
+      top.style.display = 'none';
+      checkReady(); return;
+    }
+
+    var report = reportsData[parseInt(idx)];
+    var type   = report.type.toUpperCase();
+
+    // Topbar badge update
+    top.style.display = 'inline-block';
+    top.textContent   = type;
+    top.className     = 'topbar-badge ' + (type === 'COMPACT' ? 'badge-compact' : 'badge-detailed');
+
+    // Voucher tags — is report ke saved types ke hisaab se re-apply karo
+    applySavedVoucherTypes(report);
+
+    checkReady();
+  }
+
+  function applySavedVoucherTypes(report) {
+    var tags = document.querySelectorAll('.vtag');
+    if (!tags || tags.length === 0) return; // tags abhi render nahi hue
+
+    // Pehle sab deselect karo
+    tags.forEach(function(t){ t.classList.remove('selected'); });
+
+    // Phir saved wale select karo
+    if (report.savedVoucherTypes && report.savedVoucherTypes.length > 0) {
+      var saved = {};
+      report.savedVoucherTypes.forEach(function(v){ saved[v.trim().toLowerCase()] = 1; });
+      tags.forEach(function(tag){
+        if (saved[tag.dataset.type.trim().toLowerCase()]) tag.classList.add('selected');
+      });
+    }
+  }
+
+  function openPicker(e) {
+    if (e) e.stopPropagation();
+    document.getElementById('fileInput').click();
+  }
+
+  function handleFile(input) {
+    if (!input.files || !input.files.length) return;
+    readFile(input.files[0]);
+  }
+
+  function readFile(file) {
+    var r = new FileReader();
+    r.onload = function(e) {
+      var text = e.target.result;
+      if (text.charCodeAt(0) === 65279 || text.indexOf('\u0000') !== -1) {
+        var r2 = new FileReader();
+        r2.onload = function(e2) { processFile(e2.target.result, file.name); };
+        r2.readAsText(file, 'UTF-16');
+      } else { processFile(text, file.name); }
+    };
+    r.readAsText(file, 'UTF-8');
+  }
+
+  function processFile(text, filename) {
+    loadedData = text;
+    var parsed = tryParse(text);
+    var valid  = getValidRows(parsed);
+
+    var dz = document.getElementById('dropZone');
+    dz.classList.add('loaded');
+    document.getElementById('loadedName').textContent = '📄 ' + filename + ' (' + valid.length + ' rows)';
+    document.getElementById('changeLink').classList.add('show');
+
+    renderPreview(valid);
+    checkReady();
+    hideStatus();
+  }
+
+  var dz = document.getElementById('dropZone');
+  dz.addEventListener('dragover',  function(e){ e.preventDefault(); e.stopPropagation(); dz.classList.add('dragover'); });
+  dz.addEventListener('dragleave', function(e){ if (!dz.contains(e.relatedTarget)) dz.classList.remove('dragover'); });
+  dz.addEventListener('drop', function(e) {
+    e.preventDefault(); e.stopPropagation();
+    dz.classList.remove('dragover');
+    var file = e.dataTransfer.files[0];
+    if (file) readFile(file);
+  });
+
+  function tryParse(raw) {
+    try {
+      var f = raw.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '');
+      f = f.replace(/\]\s*,\s*"ItemRow"\s*:\s*\[/g, ',');
+      return JSON.parse(f);
+    } catch(e) { return null; }
+  }
+
+  function getValidRows(parsed) {
+    if (!parsed) return [];
+    var env = parsed.ENVELOPE || parsed.Envelope || parsed;
+    var items = env.ItemRow || env.ITEMROW || [];
+    if (!Array.isArray(items)) items = [items];
+    return items.filter(function(r){ return r && (r.BSODateData || r.BSOItemData); });
+  }
+
+  function renderPreview(valid) {
+    var body = document.getElementById('previewBody');
+    if (!valid.length) {
+      body.innerHTML = '<div class="preview-empty"><div class="preview-empty-icon">⚠️</div><div class="preview-empty-text">Koi valid data nahi mila</div></div>';
+      return;
+    }
+
+    function pd(s) {
+      if (!s) return null;
+      var p = s.split('-');
+      return p.length === 3 ? new Date(+p[2], +p[1]-1, +p[0]) : null;
+    }
+    var MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    function fmt(d) { if (!d) return '—'; var dd = d.getDate(); var mm = d.getMonth(); var yy = d.getFullYear(); return (dd < 10 ? '0'+dd : dd) + '-' + MONTHS_SHORT[mm] + '-' + yy; }
+
+    var dates = valid.map(function(r){ return pd(r.BSODateData); }).filter(Boolean);
+    dates.sort(function(a,b){ return a-b; });
+
+    // Unique bills
+    var bills = {};
+    valid.forEach(function(r){ if(r.BSOBillNoData) bills[r.BSOBillNoData] = 1; });
+    var billCount = Object.keys(bills).length;
+
+    // Voucher types
+    var types = {};
+    valid.forEach(function(r){ if(r.BSOVoucherTypeData) types[r.BSOVoucherTypeData] = 1; });
+    var typeKeys = Object.keys(types);
+
+    // Total value
+    var totalVal = 0;
+    valid.forEach(function(r){ totalVal += Math.abs(parseFloat(r.BSOTotalValueData) || 0); });
+
+    body.innerHTML =
+      '<div class="stat-grid">' +
+        '<div class="stat-cell"><div class="stat-label">Total Rows</div><div class="stat-val green">' + valid.length.toLocaleString() + '</div></div>' +
+        '<div class="stat-cell"><div class="stat-label">Unique Bills</div><div class="stat-val blue">' + billCount + '</div></div>' +
+        '<div class="stat-cell"><div class="stat-label">Total Value</div><div class="stat-val purple" style="font-size:15px">₹' + totalVal.toLocaleString('en-IN', {maximumFractionDigits:0}) + '</div></div>' +
+        '<div class="stat-cell"><div class="stat-label">Voucher Types</div><div class="stat-val" style="font-size:15px">' + typeKeys.length + '</div></div>' +
+      '</div>' +
+      '<div class="date-range-bar">' +
+        '<div class="date-from">' + fmt(dates[0]) + '</div>' +
+        '<div class="date-arrow">────→</div>' +
+        '<div class="date-to">' + fmt(dates[dates.length-1]) + '</div>' +
+      '</div>' +
+      '<div class="voucher-tags" id="voucherTags">' +
+        typeKeys.map(function(t){ return '<div class="vtag" onclick="toggleVoucher(this)" data-type="' + t.replace(/"/g,"&quot;") + '">' + t + '</div>'; }).join('') +
+      '</div>' +
+      '<div class="vtag-actions">' +
+        '<button class="vtag-action-btn" onclick="selectAllVouchers()">Select All</button>' +
+        '<button class="vtag-action-btn" onclick="clearAllVouchers()">Clear All</button>' +
+      '</div>' +
+      '<div class="detail-list">' +
+        '<div class="detail-row"><span class="detail-key">First Item</span><span class="detail-val">' + trunc(valid[0].BSOItemData, 28) + '</span></div>' +
+        '<div class="detail-row"><span class="detail-key">First Party</span><span class="detail-val accent">' + trunc(valid[0].BSOPartyData, 28) + '</span></div>' +
+        '<div class="detail-row"><span class="detail-key">Last Party</span><span class="detail-val accent">' + trunc(valid[valid.length-1].BSOPartyData, 28) + '</span></div>' +
+      '</div>';
+  }
+
+  function trunc(s, n) { return s ? (s.length > n ? s.substring(0,n-1)+'…' : s) : '—'; }
+
+  function toggleVoucher(el) {
+    el.classList.toggle('selected');
+    autoSaveVouchers();
+  }
+
+  function autoSaveVouchers() {
+    var idx = document.getElementById('reportSelect').value;
+    if (idx === '') return;
+    var report = reportsData[parseInt(idx)];
+    var selected = getSelectedVouchers();
+    report.savedVoucherTypes = selected;
+    google.script.run.saveVoucherTypes(report.name, selected);
+  }
+
+  function refreshPage() { location.reload(); }
+
+  function selectAllVouchers() {
+    document.querySelectorAll('.vtag').forEach(function(t){ t.classList.add('selected'); });
+    autoSaveVouchers();
+  }
+
+  function clearAllVouchers() {
+    document.querySelectorAll('.vtag').forEach(function(t){ t.classList.remove('selected'); });
+    autoSaveVouchers();
+  }
+
+  function getSelectedVouchers() {
+    var tags = document.querySelectorAll('.vtag');
+    if (!tags || tags.length === 0) return []; // tags exist nahi karte abhi
+    var sel = [];
+    tags.forEach(function(t){ if (t.classList.contains('selected')) sel.push(t.dataset.type); });
+    return sel;
+  }
+
+
+
+  function checkReady() {
+    document.getElementById('uploadBtn').disabled = !(loadedData.length > 0 && document.getElementById('reportSelect').value !== '');
+
+    // File load hone ke baad saved voucher types apply karo
+    var idx = document.getElementById('reportSelect').value;
+    if (idx !== '') {
+      applySavedVoucherTypes(reportsData[parseInt(idx)]);
+    }
+  }
+
+  function startUpload() {
+    if (!loadedData) { showStatus('Pehle file choose karein!', 'error'); return; }
+    var idx = document.getElementById('reportSelect').value;
+    if (idx === '') { showStatus('Report select karein!', 'error'); return; }
+
+    var report = reportsData[parseInt(idx)];
+    var btn = document.getElementById('uploadBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<div class="spinner"></div> Uploading...';
+    showStatus('Processing...', 'loading');
+
+    google.script.run
+      .withSuccessHandler(function(res) {
+        btn.disabled = false;
+        btn.innerHTML = '↑ Upload to Sheet';
+        showStatus(res, res && (res.includes('✅') || res.includes('Done')) ? 'success' : 'error');
+      })
+      .withFailureHandler(function(err) {
+        btn.disabled = false;
+        btn.innerHTML = '↑ Upload to Sheet';
+        showStatus('Error: ' + err.message, 'error');
+      })
+      .processJSON(loadedData, report.name, report.sheet, report.sheetId, report.type.toUpperCase(), getSelectedVouchers());
+  }
+
+  function showStatus(msg, type) {
+    var el = document.getElementById('statusMsg');
+    el.textContent = msg; el.className = 'status-msg show ' + type;
+  }
+  function hideStatus() { document.getElementById('statusMsg').className = 'status-msg'; }
+</script>
+</body>
+</html>
