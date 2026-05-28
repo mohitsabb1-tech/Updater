@@ -1,12 +1,83 @@
 // ╔══════════════════════════════════════════════════════════╗
 // ║  Pflanze Pharma — Tally JSON Updater                     ║
 // ║  Features:                                               ║
-// ║    • Chunked upload (HTTP 413 fix)                        ║
+// ║    • Chunked upload (HTTP 413 fix, supports 100MB+)       ║
 // ║    • Live progress with detailed debugging                ║
 // ║    • Smart duplicate detection (Bill+Party+Month)         ║
+// ║                                                           ║
+// ║  ⚠️ FIRST-TIME SETUP:                                     ║
+// ║    1) Apps Script editor me jakar 'setupPermissions'      ║
+// ║       function select karein                              ║
+// ║    2) ▶ Run button dabayein                               ║
+// ║    3) Google permission dialog allow karein               ║
+// ║    4) Web app me upload retry karein                      ║
 // ╚══════════════════════════════════════════════════════════╝
 
 var MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+// ╔══════════════════════════════════════════════════════════╗
+// ║  ONE-TIME SETUP — run this ONCE from editor              ║
+// ╚══════════════════════════════════════════════════════════╝
+//
+// Apps Script me naye API (DriveApp) add karne par user ko ek baar
+// manually permission grant karni padti hai. Yeh function editor me
+// run karne par saare APIs ki permission ek saath maang lega.
+//
+function setupPermissions() {
+  var msgs = [];
+
+  // 1. Spreadsheet access test
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    msgs.push('✅ Spreadsheet access OK: ' + (ss ? ss.getName() : 'no active'));
+  } catch(e) {
+    msgs.push('❌ Spreadsheet: ' + e.toString());
+  }
+
+  // 2. Drive access test
+  try {
+    var folder = _getTempFolder();
+    msgs.push('✅ Drive access OK. Temp folder: ' + folder.getName() + ' (id: ' + folder.getId() + ')');
+
+    // Create + delete a tiny test file to confirm write permission
+    var testFile = folder.createFile('permission_test_' + new Date().getTime(), 'ok', MimeType.PLAIN_TEXT);
+    testFile.setTrashed(true);
+    msgs.push('✅ Drive write OK (test file created & deleted)');
+  } catch(e) {
+    msgs.push('❌ Drive: ' + e.toString());
+  }
+
+  // 3. Cache access test
+  try {
+    var cache = CacheService.getUserCache();
+    cache.put('setup_test', 'ok', 60);
+    var v = cache.get('setup_test');
+    cache.remove('setup_test');
+    msgs.push('✅ Cache OK: ' + v);
+  } catch(e) {
+    msgs.push('❌ Cache: ' + e.toString());
+  }
+
+  // 4. Properties test
+  try {
+    PropertiesService.getScriptProperties();
+    msgs.push('✅ Properties OK');
+  } catch(e) {
+    msgs.push('❌ Properties: ' + e.toString());
+  }
+
+  var report = msgs.join('\n');
+  Logger.log(report);
+
+  // Show in dialog if running from spreadsheet UI
+  try {
+    SpreadsheetApp.getUi().alert('Setup Status', report, SpreadsheetApp.getUi().ButtonSet.OK);
+  } catch(e) {
+    // Running from editor without UI - that's fine, log is enough
+  }
+
+  return report;
+}
 
 // ╔══════════════════════════════════════════════════════════╗
 // ║  PROGRESS TRACKING  (CacheService)                       ║
