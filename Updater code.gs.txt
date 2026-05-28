@@ -49,44 +49,150 @@ function clearProgress(jobId) {
 }
 
 // ╔══════════════════════════════════════════════════════════╗
-// ║  CHUNKED UPLOAD  (HTTP 413 fix)                          ║
+// ║  CHUNKED UPLOAD via DRIVE  (HTTP 413 fix, 100MB+ support)║
 // ╚══════════════════════════════════════════════════════════╝
 //
-// Bade JSON files Apps Script ke single payload limit (~50MB request,
-// but practical ~10MB) ko cross karte hain → HTTP 413.
-// Solution: client small chunks bheje, server CacheService me jod ke
-// rakhta hai, last chunk par actual processing chalti hai.
+// Bade JSON files (100MB+) Apps Script ke payload limit ko cross karte hain
+// → HTTP 413. CacheService bhi sirf 100KB per value hold kar sakta hai.
+// Solution: client 1MB chunks bheje, server har chunk ko Drive temp folder me
+// alag file ki tarah save karta hai. Last chunk ke baad sab files read karke
+// concat karta hai aur process karta hai.
 //
+// Why Drive?
+//   ✓ Per-file size unlimited (vs CacheService 100KB limit)
+//   ✓ Persistent (cache expire issues nahi)
+//   ✓ Fast read/write
+//
+var TEMP_FOLDER_NAME = 'PflanzeUploaderTemp';
+
+function _getTempFolder() {
+  var folders = DriveApp.getFoldersByName(TEMP_FOLDER_NAME);
+  if (folders.hasNext()) return folders.next();
+  return DriveApp.createFolder(TEMP_FOLDER_NAME);
+}
+
+function _padIdx(n) {
+  return ('00000' + n).slice(-5); // padded for proper sort order
+}
+
+function _chunkFileName(jobId, idx) {
+  return 'tmpchunk_' + jobId + '_' + _padIdx(idx);
+}
+
 function uploadChunk(jobId, chunkIndex, totalChunks, chunkData) {
   try {
-    var cache = CacheService.getUserCache();
-    var key = 'chunk_' + jobId + '_' + chunkIndex;
-    cache.put(key, chunkData, 600);
-    _setProgress(jobId, Math.round((chunkIndex + 1) / totalChunks * 8),
-      '📤 Chunk ' + (chunkIndex + 1) + '/' + totalChunks + ' upload',
-      'File parts me bheji ja rahi hai (HTTP 413 avoid)');
+    var folder = _getTempFolder();
+    var fileName = _chunkFileName(jobId, chunkIndex);
+
+    // Idempotent: agar yeh chunk pehle se hai (retry case) to delete karke fresh banao
+    var existing = folder.getFilesByName(fileName);
+    while (existing.hasNext()) existing.next().setTrashed(true);
+
+    // Create as plain text file
+    folder.createFile(fileName, chunkData, MimeType.PLAIN_TEXT);
+
+    var pct = Math.round((chunkIndex + 1) / totalChunks * 8); // chunks 0-8% range
+    var sizeKB = Math.round(chunkData.length / 1024);
+    _setProgress(jobId, pct,
+      '📤 Chunk ' + (chunkIndex + 1) + '/' + totalChunks,
+      'Drive me save: ' + sizeKB + ' KB (total ' + Math.round((chunkIndex+1) * sizeKB / 1024) + ' MB)');
     return { ok: true, received: chunkIndex + 1, total: totalChunks };
   } catch(e) {
-    return { ok: false, error: e.toString() };
+    return { ok: false, error: 'Chunk ' + chunkIndex + ' fail: ' + e.toString() };
   }
 }
 
-function _assembleChunks(jobId, totalChunks) {
-  var cache = CacheService.getUserCache();
+function _assembleChunksFromDrive(jobId, totalChunks) {
+  var folder = _getTempFolder();
   var parts = [];
+  var totalBytes = 0;
+
   for (var i = 0; i < totalChunks; i++) {
-    var key = 'chunk_' + jobId + '_' + i;
-    var p = cache.get(key);
-    if (p === null) {
-      throw new Error('Chunk ' + i + ' missing (cache expired?). Dobara try karein.');
+    if (i % 10 === 0) {
+      _setProgress(jobId, 10 + Math.round(i / totalChunks * 3),
+        '📦 Chunks assemble',
+        'Drive se ' + (i+1) + '/' + totalChunks + ' chunks padh raha hu...');
     }
-    parts.push(p);
+    var fileName = _chunkFileName(jobId, i);
+    var files = folder.getFilesByName(fileName);
+    if (!files.hasNext()) {
+      _cleanupChunks(jobId, totalChunks);
+      throw new Error('Chunk ' + i + ' Drive me nahi mila. Refresh karke retry karein.');
+    }
+    var content = files.next().getBlob().getDataAsString();
+    parts.push(content);
+    totalBytes += content.length;
   }
-  // Cleanup
-  for (var j = 0; j < totalChunks; j++) {
-    cache.remove('chunk_' + jobId + '_' + j);
+
+  _setProgress(jobId, 13, '📦 Chunks assemble',
+    'Sab chunks jod raha hu (' + Math.round(totalBytes / 1024 / 1024) + ' MB)...');
+  var assembled = parts.join('');
+  parts = null; // free memory
+
+  // Cleanup temp files (background)
+  _cleanupChunks(jobId, totalChunks);
+
+  return assembled;
+}
+
+function _cleanupChunks(jobId, totalChunks) {
+  try {
+    var folder = _getTempFolder();
+    for (var j = 0; j < totalChunks; j++) {
+      var fileName = _chunkFileName(jobId, j);
+      var files = folder.getFilesByName(fileName);
+      while (files.hasNext()) {
+        try { files.next().setTrashed(true); } catch(e2){}
+      }
+    }
+  } catch(e) { /* best effort */ }
+}
+
+// Manual cleanup helper — agar koi orphan chunks reh gaye purane jobs ke
+function cleanupAllOrphanChunks() {
+  try {
+    var folder = _getTempFolder();
+    var files = folder.getFilesByName ? folder.getFiles() : null;
+    if (!files) return 'No folder';
+    var count = 0;
+    var now = new Date().getTime();
+    while (files.hasNext()) {
+      var f = files.next();
+      var name = f.getName();
+      if (name.indexOf('tmpchunk_') === 0) {
+        // Delete chunks older than 1 hour
+        var age = now - f.getDateCreated().getTime();
+        if (age > 60 * 60 * 1000) {
+          f.setTrashed(true);
+          count++;
+        }
+      }
+    }
+    return 'Cleaned ' + count + ' orphan chunks';
+  } catch(e) {
+    return 'Error: ' + e.toString();
   }
-  return parts.join('');
+}
+
+// Cancel running job — delete this jobId ke saare chunks
+function cancelJob(jobId) {
+  if (!jobId) return { ok: false };
+  try {
+    var folder = _getTempFolder();
+    var files = folder.getFiles();
+    var count = 0;
+    var prefix = 'tmpchunk_' + jobId + '_';
+    while (files.hasNext()) {
+      var f = files.next();
+      if (f.getName().indexOf(prefix) === 0) {
+        try { f.setTrashed(true); count++; } catch(e2){}
+      }
+    }
+    clearProgress(jobId);
+    return { ok: true, deleted: count };
+  } catch(e) {
+    return { ok: false, error: e.toString() };
+  }
 }
 
 // ╔══════════════════════════════════════════════════════════╗
@@ -460,9 +566,9 @@ function processJSONChunked(jobId, totalChunks, reportName, sheetName, sheetId, 
   var lastStage = 'Initial';
   try {
     _setProgress(jobId, 10, '📦 Chunks assemble',
-      totalChunks + ' chunks ko jod raha hu...');
-    lastStage = 'Chunk assembly';
-    var jsonData = _assembleChunks(jobId, totalChunks);
+      totalChunks + ' chunks Drive se padhe ja rahe hain...');
+    lastStage = 'Chunk assembly from Drive';
+    var jsonData = _assembleChunksFromDrive(jobId, totalChunks);
 
     return _processJSONInternal(jsonData, reportName, sheetName, sheetId, type, selectedVoucherTypes, allowDuplicates, jobId);
   } catch(e) {

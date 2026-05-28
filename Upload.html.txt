@@ -204,6 +204,19 @@
     }
     .progress-elapsed { font-variant-numeric: tabular-nums; color: var(--accent); }
 
+    .cancel-upload-btn {
+      margin-top: 10px; width: 100%;
+      padding: 7px 12px; background: transparent;
+      border: 1px solid var(--border); border-radius: 6px;
+      color: var(--muted); font-size: 11px; font-weight: 600;
+      font-family: 'Inter', sans-serif; cursor: pointer;
+      transition: all 0.15s; display: none;
+    }
+    .cancel-upload-btn:hover { border-color: var(--error); color: var(--error); }
+    .progress-card.show.loading .cancel-upload-btn,
+    .progress-card.show.warning .cancel-upload-btn,
+    .progress-card.show.stuck   .cancel-upload-btn { display: block; }
+
     .stuck-warning {
       display: none; margin-top: 12px; padding: 10px 12px;
       background: rgba(245,158,11,0.12); border: 1px solid rgba(245,158,11,0.3);
@@ -466,6 +479,7 @@
           Last update: <span id="stuckLastUpdate">—</span> seconds pehle.<br>
           Agar 60s+ stuck rahe to refresh karke chote file try karein.
         </div>
+        <button class="cancel-upload-btn" onclick="cancelUpload()">✕ Cancel Upload</button>
         <div class="progress-final" id="progressFinal"></div>
       </div>
 
@@ -750,45 +764,78 @@
   function hideModal() { document.getElementById('modalOverlay').classList.remove('show'); }
 
   // ╔══════════════════════════════════════════════════╗
-  // ║  CHUNKED UPLOAD                                  ║
+  // ║  CHUNKED UPLOAD (Drive-backed, parallel)         ║
   // ╚══════════════════════════════════════════════════╝
-  // Apps Script ka request limit hit hone se HTTP 413 aata hai.
-  // Solution: file ko 200KB chunks me bhejo, server cache me jod le,
-  // last chunk ke baad processJSONChunked() chala.
-  var CHUNK_SIZE = 200 * 1024; // 200 KB
+  // Server side me har chunk Drive me alag file me save hota hai.
+  // 100MB file = ~100 chunks × 1MB. Parallel uploads = 3 at a time.
+  var CHUNK_SIZE      = 1024 * 1024; // 1 MB per chunk
+  var PARALLEL_CHUNKS = 3;            // 3 chunks in flight at once
 
-  function uploadChunksSequential(jobId, totalChunks, onAllSent, onError) {
-    var idx = 0;
-    function sendNext() {
-      if (idx >= totalChunks) { onAllSent(); return; }
+  function uploadChunksParallel(jobId, totalChunks, onAllSent, onError) {
+    var nextIdx = 0;
+    var completed = 0;
+    var failed = false;
+    var inFlight = 0;
+
+    function startNext() {
+      if (failed) return;
+      while (inFlight < PARALLEL_CHUNKS && nextIdx < totalChunks) {
+        sendOne(nextIdx);
+        nextIdx++;
+      }
+    }
+
+    function sendOne(idx) {
+      inFlight++;
       var start = idx * CHUNK_SIZE;
       var end   = Math.min(start + CHUNK_SIZE, loadedData.length);
       var chunk = loadedData.substring(start, end);
-      var thisIdx = idx;
 
-      // Update progress
-      var pct = Math.round((idx) / totalChunks * 8); // 0-8% range for chunks
+      // UI: dikhao kitne complete hue
+      var pct = Math.round(completed / totalChunks * 8);
       setProgressBar(pct);
-      setStageText('📤 Chunk ' + (idx+1) + '/' + totalChunks, 'Upload ho raha hai (' + Math.round((idx+1)*CHUNK_SIZE/1024) + ' KB)');
+      var sentMB  = (completed * CHUNK_SIZE / 1024 / 1024).toFixed(1);
+      var totalMB = (loadedData.length / 1024 / 1024).toFixed(1);
+      setStageText(
+        '📤 Uploading file (' + completed + '/' + totalChunks + ' chunks)',
+        sentMB + ' MB / ' + totalMB + ' MB — Drive me save ho raha hai'
+      );
       lastUpdateTime = new Date().getTime();
 
       google.script.run
         .withSuccessHandler(function(r) {
-          if (!r || !r.ok) { onError(r && r.error ? r.error : 'Chunk send fail'); return; }
-          idx++;
-          sendNext();
+          inFlight--;
+          if (failed) return;
+          if (!r || !r.ok) {
+            failed = true;
+            onError(r && r.error ? r.error : 'Chunk ' + idx + ' send fail');
+            return;
+          }
+          completed++;
+          if (completed === totalChunks) {
+            setProgressBar(8);
+            setStageText('✅ All chunks uploaded', 'Server processing shuru kar raha hai...');
+            onAllSent();
+            return;
+          }
+          startNext();
         })
         .withFailureHandler(function(err) {
+          inFlight--;
+          if (failed) return;
           var msg = (err && err.message) ? err.message : String(err);
           if (msg.indexOf('413') !== -1) {
-            onError('HTTP 413: Chunk bhi bada hai. Refresh karke chote file try karein.');
+            failed = true;
+            onError('HTTP 413: Ek single chunk bhi limit cross kar gaya. Refresh karke retry karein.');
           } else {
-            onError(msg + ' (chunk ' + thisIdx + ')');
+            // Transient error — retry once
+            setTimeout(function(){ if (!failed) sendOne(idx); }, 1500);
           }
         })
-        .uploadChunk(jobId, thisIdx, totalChunks, chunk);
+        .uploadChunk(jobId, idx, totalChunks, chunk);
     }
-    sendNext();
+
+    startNext();
   }
 
   // ╔══════════════════════════════════════════════════╗
@@ -841,9 +888,14 @@
 
     // Calculate chunks
     var totalChunks = Math.ceil(loadedData.length / CHUNK_SIZE);
+    var fileMB = (loadedData.length / 1024 / 1024).toFixed(1);
+    setStageText(
+      '📤 Uploading file (0/' + totalChunks + ' chunks)',
+      fileMB + ' MB ko ' + totalChunks + ' chunks me bhej rahe hain (' + PARALLEL_CHUNKS + ' parallel)'
+    );
 
-    // Step 1: send all chunks
-    uploadChunksSequential(currentJobId, totalChunks,
+    // Step 1: send all chunks in parallel
+    uploadChunksParallel(currentJobId, totalChunks,
       function onAllSent() {
         // Step 2: trigger server-side processing + start progress polling
         progressPollTimer = setInterval(pollProgress, 700);
@@ -1008,6 +1060,30 @@
 
   function hideProgress() {
     document.getElementById('progressCard').className = 'progress-card';
+  }
+
+  function cancelUpload() {
+    showModal({
+      type: 'warning', icon: '⚠️',
+      title: 'Upload cancel karein?',
+      subtitle: 'Server side processing rok diya jayega aur partially uploaded chunks delete kar diye jayenge.',
+      buttons: [
+        { label: 'Nahi, jari rakho', style: '', action: hideModal },
+        { label: 'Haan, cancel', style: 'danger', action: function(){
+            hideModal();
+            stopProgressTimers();
+            if (currentJobId) {
+              google.script.run
+                .withSuccessHandler(function(){})
+                .withFailureHandler(function(){})
+                .cancelJob(currentJobId);
+            }
+            document.getElementById('uploadBtn').disabled = false;
+            document.getElementById('uploadBtn').innerHTML = '↑ Upload to Sheet';
+            finalizeProgress('error', '✕ Cancelled by user', 'Upload manually rok diya gaya');
+        }}
+      ]
+    });
   }
 </script>
 </body>
